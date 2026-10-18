@@ -1,5 +1,5 @@
-# H1.5A-2: manual, synthetic, single-run Claude Pro OAuth pilot.
-# PREPARED NOT RUN. NEVER add push/issues/comment/schedule triggers to this experiment.
+# H1.5A-2: PREPARED_NOT_RUN. User approval required for one actual dispatch.
+# Single manual event. No recurring or auto-triggering events.
 name: H1.5A-2 Claude OAuth isolated pilot
 
 on:
@@ -8,19 +8,21 @@ on:
 permissions: {}
 
 concurrency:
-  group: h15a-2-single-claude-oauth
+  group: h15a-2-claude-oauth-single
   cancel-in-progress: false
 
 jobs:
-  claude-oauth-probe:
-    name: Claude synthetic task -> GitHub Issue #2
+  claude-read-only:
+    name: Validate Issue #2 and run synthetic Claude task
     if: github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      issues: write
+      issues: read
+    outputs:
+      structured_output: ${{ steps.claude.outputs.structured_output }}
     steps:
-      - name: Validate issue contract and write synthetic-only prompt
+      - name: Check synthetic Issue contract and prevent repeat calls
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -31,23 +33,21 @@ jobs:
           issue="$(gh api "repos/$GITHUB_REPOSITORY/issues/2")"
           jq -e --arg title 'H1.5A-2 — Claude Pro OAuth One-Time Zero-Copy Pilot (PREPARE ONLY)' \
             '.number == 2 and .state == "open" and .title == $title and
-            (.body | contains("H15A2_CLAUDE_CONTRACT_V1") and
-                     contains("Challenge phrase: `blue lantern`"))' \
+            (.body | contains("H15A2_CLAUDE_CONTRACT_V1") and contains("Challenge phrase: `blue lantern`"))' \
             <<< "$issue" >/dev/null
           existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/2/comments?per_page=100" --jq '.[].body')"
           if grep -Fq 'H15A2_CLAUDE_REPORT_V1' <<< "$existing"; then
-            echo 'FAIL CLOSED: H1.5A-2 already has a result. No rerun.'
+            echo 'STOP: prior result exists; no second provider call.'
             exit 1
           fi
           cat > "$RUNNER_TEMP/h15a2-prompt.txt" <<'EOF'
-          You are running one isolated, synthetic GitHub Actions handoff check.
-          Task ID: H1.5A-2. The authorized Issue #2 challenge phrase is: blue lantern.
-          Return ONLY the structured fields requested by the JSON schema:
-          task_id must be "H1.5A-2"; uppercase_phrase must be the challenge phrase in uppercase.
-          Do not use tools, browse the network, access files, or take any GitHub action.
+          This is a single synthetic AI handoff test.
+          Task ID: H1.5A-2. The challenge phrase is: blue lantern.
+          Return ONLY JSON fields task_id="H1.5A-2", uppercase_phrase="BLUE LANTERN".
+          Do not access files, GitHub, network, or invoke tools.
           EOF
 
-      - name: Claude Code (one synthetic response, OAuth only)
+      - name: Claude Code via subscription OAuth (NO GitHub write)
         id: claude
         uses: anthropics/claude-code-action/base-action@f27be6b65a4652f08a2ba3cff79114829b588967
         with:
@@ -62,16 +62,33 @@ jobs:
             --disallowedTools "mcp__*"
             --json-schema '{"type":"object","properties":{"task_id":{"type":"string"},"uppercase_phrase":{"type":"string"}},"required":["task_id","uppercase_phrase"],"additionalProperties":false}'
 
-      - name: Verify structured result and comment on exact issue
-        if: steps.claude.outputs.conclusion == 'success'
+  github-report:
+    name: Deterministic Issue result (NO Claude OAuth)
+    needs: claude-read-only
+    if: needs.claude-read-only.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLAUDE_JSON: ${{ needs.claude-read-only.outputs.structured_output }}
+    steps:
+      - name: Validate exact result and post one report
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLAUDE_JSON: ${{ steps.claude.outputs.structured_output }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'augusliang23-web/cc-h15a-claude-dispatch-lab'
           test "$GITHUB_REF" = 'refs/heads/main'
+          issue="$(gh api "repos/$GITHUB_REPOSITORY/issues/2")"
+          jq -e --arg title 'H1.5A-2 — Claude Pro OAuth One-Time Zero-Copy Pilot (PREPARE ONLY)' \
+            '.number == 2 and .state == "open" and .title == $title and (.body | contains("H15A2_CLAUDE_CONTRACT_V1"))' \
+            <<< "$issue" >/dev/null
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/2/comments?per_page=100" --jq '.[].body')"
+          if grep -Fq 'H15A2_CLAUDE_REPORT_V1' <<< "$existing"; then
+            echo 'STOP: report already exists; no duplicate comment.'
+            exit 1
+          fi
           test -n "$CLAUDE_JSON"
           jq -e '.task_id == "H1.5A-2" and .uppercase_phrase == "BLUE LANTERN" and (keys | sort) == ["task_id","uppercase_phrase"]' \
             <<< "$CLAUDE_JSON" >/dev/null
@@ -79,20 +96,18 @@ jobs:
           # H15A2_CLAUDE_REPORT_V1
           Task: H1.5A-2
           Issue: https://github.com/augusliang23-web/cc-h15a-claude-dispatch-lab/issues/2
-          Workflow run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-          Provider: Claude Code via official base-action, subscription OAuth
+          Workflow: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          Provider: Claude Code official base-action with subscription OAuth
           Requested model / effort: sonnet / low
-          Structured result verified: BLUE LANTERN
-          Claude tools: disabled by requested CLI flags
-          Source edits / deployments: not authorized
-          Actual token usage and cost: UNKNOWN (verify through billing/usage separately)
-          Evidence grade: GITHUB_VERIFIED report presence; Claude runtime model and tool isolation require separate evidence.
-          Status: READY_FOR_CONTROL_PLANE_REVIEW
+          Verified result: BLUE LANTERN
+          GitHub permissions for Claude job: issues:read only
+          Files / deployments: Not authorized
+          Actual tokens / cost: UNKNOWN; verify separately
+          READY_FOR_CONTROL_PLANE_REVIEW
           EOF
           )"
-          comment_id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues/2/comments" \
-            -f "body=$report" --jq '.id')"
-          test -n "$comment_id"
-          recorded="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --jq '.body')"
-          test "$recorded" = "$report"
-          echo "H1.5A-2 result comment confirmed: https://github.com/$GITHUB_REPOSITORY/issues/2#issuecomment-$comment_id"
+          id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues/2/comments" -f "body=$report" --jq '.id')"
+          test -n "$id"
+          readback="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" --jq '.body')"
+          test "$readback" = "$report"
+          echo "Report readback PASS; https://github.com/$GITHUB_REPOSITORY/issues/2#issuecomment-$id"
