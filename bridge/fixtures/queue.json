@@ -1,0 +1,20 @@
+{
+  "repository": "augusliang23-web/cc-h15a-claude-dispatch-lab",
+  "issues": [
+    {
+      "number": 101,
+      "state": "open",
+      "body": "{\"contract_version\": \"CC_AG_BRIDGE_V1\", \"task_id\": \"AG2B-fixture-1\", \"repository\": \"augusliang23-web/cc-h15a-claude-dispatch-lab\", \"issue_number\": 101, \"agent\": \"antigravity\", \"model\": \"gemini-3.8-flash-low\", \"task_type\": \"synthetic\", \"execution_mode\": \"dry-run\", \"approval\": \"approved\", \"status\": \"QUEUED\"}"
+    },
+    {
+      "number": 102,
+      "state": "open",
+      "body": "{\"contract_version\": \"CC_AG_BRIDGE_V1\", \"task_id\": \"AG2B-fixture-2\", \"repository\": \"unauthorized/example\", \"issue_number\": 102, \"agent\": \"antigravity\", \"model\": \"gemini-3.8-flash-low\", \"task_type\": \"synthetic\", \"execution_mode\": \"dry-run\", \"approval\": \"approved\", \"status\": \"QUEUED\"}"
+    },
+    {
+      "number": 103,
+      "state": "open",
+      "body": "{\"contract_version\": \"CC_AG_BRIDGE_V1\", \"task_id\": \"AG2B-fixture-3\", \"repository\": \"augusliang23-web/cc-h15a-claude-dispatch-lab\", \"issue_number\": 103, \"agent\": \"antigravity\", \"model\": \"gemini-3.8-flash-low\", \"task_type\": \"synthetic\", \"execution_mode\": \"dry-run\", \"approval\": \"approved\", \"status\": \"QUEUED\", \"command\": \"DO_NOT_EXECUTE\"}"
+    }
+  ]
+}
