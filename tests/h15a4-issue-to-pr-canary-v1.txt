@@ -1,0 +1,4 @@
+H1.5A-4B synthetic canary.
+Test phrase: blue lantern
+Expected result: BLUE LANTERN
+No executable code or secrets.
