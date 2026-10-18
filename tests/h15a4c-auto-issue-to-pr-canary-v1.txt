@@ -1,0 +1,4 @@
+H1.5A-4C synthetic Issue-opened dispatch canary.
+Test phrase: blue lantern
+Expected output: BLUE LANTERN
+No executable content, source code, or secrets.
