@@ -189,3 +189,125 @@ human attestation → Mac Bridge reserves exact task → Antigravity executes �
 GitHub report → ChatGPT reviews. AG2B-2 provides offline verification and mock
 reservation/recovery only. AG2B-3 needs explicit scope, accepted trusted approval
 path and independently tested live reservation protections before activation.
+
+## AG2B-2A — sticky journal restrictions and independent offline CI
+
+### Finding, root cause and minimal fix
+
+Control Plane review on PR #11 at `69310e901c073fac01ed72b48fcadc555949ed4f`
+identified that a valid recovery-status *value* was being confused with a safe
+recovery-status *transition*. Ordinary updates could clear CLAIMED /
+RECONCILE_REQUIRED back to CLAIM_CONFIRMED, or RUNNING / UNCERTAIN back to
+EXECUTING, and even mark uncertain execution COMPLETED. Live execution was and
+remains disabled, but this would be unsafe for a future executor.
+
+`Journal.update` now applies a small explicit safety-progression policy, under
+the same exclusive lock and before persistence, in addition to the existing
+state machine, schema validation and sequence check:
+
+| Previous restriction | Only permitted destination pairs |
+| --- | --- |
+| RECONCILE_REQUIRED | QUEUED / RECONCILE_REQUIRED; CLAIMED / RECONCILE_REQUIRED |
+| UNCERTAIN | RUNNING / UNCERTAIN; INTERRUPTED / UNCERTAIN; BLOCKED / BLOCKED |
+| BLOCKED | No update; existing terminal guard remains |
+
+Task-state transitions must also be valid, so the table does not permit skipping
+RUNNING → INTERRUPTED before BLOCKED or moving CLAIMED backward to QUEUED.
+QUEUED / RECONCILE_REQUIRED → CLAIMED / RECONCILE_REQUIRED remains available to
+record an exact remote claim without clearing the restriction. CLAIM_PENDING is
+not an irreversible uncertainty state: READY → CLAIM_PENDING → verified CLAIMED /
+CLAIM_CONFIRMED continues to work. Failed ordinary downgrades leave persisted
+bytes and sequence unchanged. A different process or refreshed sequence cannot
+bypass the policy.
+
+There is no restriction-clear API, environment flag or CLI bypass. A future
+trusted reconciliation mechanism would need independent authorization bound to
+exact task digest and attempt identity, verified remote evidence, an explicit
+recovery decision and an audit trail. That mechanism is documentation-only here.
+Checksums still do not prevent a malicious same-user process from editing or
+rolling back the file; the earlier durability/trust limits remain unchanged.
+
+### Focused test evidence
+
+`bridge/test/journal-policy.test.mjs` covers J01–J10 and equivalent cross-state
+bypasses, with parameterized cases rather than duplicate tests for each property.
+Each rejected-update case also compares actual file bytes before/after (J07).
+The restart case uses another Node process (J08); stale/current writer checks
+cover J09; corrupt journal read/update checks cover J10.
+
+Before fix: **14 tests, 4 pass / 10 fail**, reproducing unsafe state clearing.
+After fix: **14/14 pass**. Full local suite: **85 existing + 14 new = 99/99 pass**
+on Node 20.20.2. Existing dry-run remains 3 candidates / 1 valid / 2 rejected.
+Syntax and whitespace checks pass. The separate-process/network-trapping safety
+suite still exercises the unconditionally disabled live admission/claim/AI
+boundaries. No original AG2B-1/AG2B-2 tests are removed or weakened.
+
+### Dedicated CI, permissions and reproducibility
+
+New workflow: `.github/workflows/ag2b-offline-ci.yml`, **AG2B offline safety CI**.
+Only pull_request synchronize/reopened events on main with relevant bridge,
+workflow or security-document changes are eligible. The job additionally requires
+this exact lab, PR #11, same-repository head, branch
+`codex/ag2b2-secure-claim-recovery` and Draft status. There is no push, issues,
+pull_request_target, workflow_run, manual or schedule trigger.
+
+The hosted Ubuntu job has a five-minute timeout and only contents:read. It checks
+out the exact event PR HEAD with full history and persist-credentials:false,
+ensuring the older AG2B-1 workflow-byte-comparison baseline exists. Verified
+immutable official pins: checkout v6.1.0 at
+`d23441a48e516b6c34aea4fa41551a30e30af803`; setup-node v7.1.0 at
+`949feb2413d6458794dcd2491c4babbbce0c15c1`. Node 22 is selected; automatic package
+caching is disabled. No package installation, matrix, cache or artifacts.
+
+Commands:
+
+```sh
+node --check <each changed .js/.mjs file>
+git diff --check <event base SHA> <event PR HEAD SHA>
+node --test --test-reporter=spec bridge/test/*.test.mjs
+node bridge/dry-run.mjs
+```
+
+The job validates the checked-out HEAD and baseline commit before testing. The
+full CI command includes the safety tests trapping model/network/process launch
+and the immutable old Claude workflow comparison. It has no provider credentials,
+secret expressions, deploy commands, task-state writes or merge actions.
+
+Run-specific evidence (actual run URL, exact HEAD, executed steps and outcome)
+is recorded in the existing Draft PR #11 description after readback. The checked-in
+workflow/document alone is not CI PASS. Keeping that evidence in the PR avoids
+changing the candidate just to embed its own run URL. CI runs the same 99-test
+suite as local; the observed result, rather than this configured scope, decides
+CI TESTED status. No local result substitutes for a failed/missing CI run.
+
+### Automation preflight and review boundary
+
+Read-only preflight found repository webhooks empty; Actions enabled. All four
+existing workflows have only their existing manual/Issue-opened triggers and
+remain unchanged. The repository Apps page lists ChatGPT Codex Connector, Claude
+and Vercel; no changes to those integrations were made. At the starting HEAD,
+checks/status lists and repository deployments were empty. GitHub App-specific
+API enumeration was unavailable to the CLI token; the repository Apps browser
+page supplied the inventory instead.
+
+Claude's Routines UI was inspected directly: the only listed experimental
+routine, `Command center測試用`, is Paused, Enabled=0, with **All triggers are
+paused**. Its trigger is PR Opened for this lab, guarded by exact canary title
+`H15A4C_CLAUDE_CANARY_V1`, branch `lab/h15a4c-auto-issue-canary-v1` and bot author.
+PR #11 updates do not match. No routine/App was enabled, disabled or edited; no
+new PR or dispatch Issue is created. Remote activity is checked after CI too.
+This is the observed preflight, not a claim to inspect hidden provider internals.
+
+IMPLEMENTED: monotonic safety transition policy and narrow offline CI workflow.
+MOCK TESTED: task/claim/approval and recovery scenarios; actual temporary-file IO
+and separate Node process restore are tested locally. CI TESTED requires actual
+run evidence in PR #11. LIVE TESTED: none of the operational Bridge. NOT TESTED:
+real distributed GitHub locks, Mac shutdown, power-loss durability, independent
+human approval or Antigravity execution. Merge and AG2B-3 remain separate Gate
+and explicit human-authorization decisions.
+
+AG2B-2A independent bounded review: a separate GPT-6.1 Sol High reviewer inspected
+the journal-policy diff, J01–J10 tests and CI configuration, and independently
+ran 99/99 offline tests, dry-run, syntax and whitespace checks. No actionable
+P1/P2 findings were reported. Hosted Node 22 execution remains a separate CI
+check; the reviewer did not claim a Gate or release approval.

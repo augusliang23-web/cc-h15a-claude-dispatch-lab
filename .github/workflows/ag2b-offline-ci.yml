@@ -1,0 +1,58 @@
+name: AG2B offline safety CI
+
+on:
+  pull_request:
+    types: [synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'bridge/**'
+      - '.github/workflows/ag2b-offline-ci.yml'
+      - 'docs/ag2b2-security.md'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-safety:
+    if: >-
+      github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.event.pull_request.number == 11 &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.head_ref == 'codex/ag2b2-secure-claim-recovery' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR HEAD with baseline history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js without package-manager cache
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Verify HEAD and syntax of changed JavaScript
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e ac71eda90e128cd9e4d337c3fe4e927747461f21^{commit}
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA" "$HEAD_SHA" -- '*.mjs' '*.js')
+          git diff --check "$BASE_SHA" "$HEAD_SHA"
+
+      - name: Run all offline tests including live-boundary traps
+        run: node --test --test-reporter=spec bridge/test/*.test.mjs
+
+      - name: Preview local fixtures only
+        run: node bridge/dry-run.mjs

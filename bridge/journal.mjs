@@ -7,6 +7,20 @@ import { validateClaim } from './claims.mjs';
 import { transition } from './foundation.mjs';
 
 const RECOVERY={QUEUED:['READY','CLAIM_PENDING','RECONCILE_REQUIRED'],CLAIMED:['CLAIM_CONFIRMED','RECONCILE_REQUIRED'],RUNNING:['EXECUTING','UNCERTAIN'],COMPLETED:['COMPLETED'],FAILED:['BLOCKED'],INTERRUPTED:['UNCERTAIN'],BLOCKED:['BLOCKED']};
+// Ordinary updates may retain a safety restriction or move toward BLOCKED,
+// never clear it. Task-state transitions and value compatibility still apply.
+// CLAIM_PENDING is deliberately absent: verified mock claims can be confirmed.
+const SAFETY_PROGRESSION = {
+  RECONCILE_REQUIRED: ['QUEUED/RECONCILE_REQUIRED','CLAIMED/RECONCILE_REQUIRED'],
+  UNCERTAIN: ['RUNNING/UNCERTAIN','INTERRUPTED/UNCERTAIN','BLOCKED/BLOCKED'],
+  BLOCKED: [],
+};
+function validateRecoveryProgression(previous,next) {
+  if(Object.hasOwn(SAFETY_PROGRESSION,previous.recovery_status) &&
+      !SAFETY_PROGRESSION[previous.recovery_status].includes(`${next.state}/${next.recovery_status}`)) {
+    fail('INVALID_JOURNAL_UPDATE');
+  }
+}
 export function validateJournal(r) {
   if (!exact(r,['journal_version','sequence','claim','state','history','recovery_status','updated_at']) || r.journal_version!=='CC_AG_JOURNAL_V1' || !Number.isSafeInteger(r.sequence) || r.sequence<0 || !timestamp(r.updated_at) || !Object.hasOwn(RECOVERY,r.state) || !RECOVERY[r.state].includes(r.recovery_status) || !Array.isArray(r.history) || r.history.length<1 || r.history.length>r.sequence+1 || r.history.length>10) fail('INVALID_JOURNAL_RECORD');
   validateClaim(r.claim);
@@ -113,7 +127,7 @@ export class Journal {
       if(Object.hasOwn(patch,'state')) {
         next.state=transition(r.state,patch.state);next.history=[...r.history,{state:next.state,at:now}];
       } else if(r.state==='QUEUED' && r.recovery_status!=='READY' && patch.recovery_status==='READY')fail('INVALID_JOURNAL_UPDATE');
-      try {validateJournal(next);}catch {fail('INVALID_JOURNAL_UPDATE');}
+      try {validateJournal(next);validateRecoveryProgression(r,next);}catch {fail('INVALID_JOURNAL_UPDATE');}
       await persist(next);return next;
     });
   }
