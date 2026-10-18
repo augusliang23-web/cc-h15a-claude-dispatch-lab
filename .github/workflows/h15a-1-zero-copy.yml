@@ -1,0 +1,61 @@
+# H1.5A-1: isolated GitHub-only synthetic handoff.
+# Creation DOES NOT run the workflow: there are no push/issue/schedule triggers.
+name: H1.5A-1 GitHub-only handoff
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: h15a-1-synthetic-handoff
+  cancel-in-progress: false
+
+jobs:
+  synthetic-report:
+    name: One-time synthetic Issue read and comment
+    if: github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_PROMPT_DISABLED: '1'
+    steps:
+      - name: Verify exact issue and post one synthetic report
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue=1
+          marker='H15A1_GITHUB_ONLY_REPORT_V1'
+          expected_title='H1.5A-1 — GitHub-only Zero-Copy Report Smoke (synthetic, manual-trigger only)'
+          test "$GITHUB_REPOSITORY" = 'augusliang23-web/cc-h15a-claude-dispatch-lab'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          issue_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue")"
+          jq -e --arg title "$expected_title" --arg contract 'H15A1_SYNTHETIC_CONTRACT_V1' \
+            '.number == 1 and .state == "open" and .title == $title and (.body | contains($contract))' \
+            <<< "$issue_json" >/dev/null
+          comments="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$issue/comments?per_page=100" --jq '.[].body')"
+          if grep -Fq "$marker" <<< "$comments"; then
+            echo 'Existing H1.5A-1 report found; no duplicate comment created.'
+            exit 0
+          fi
+          report="$(cat <<EOF
+          # H15A1_GITHUB_ONLY_REPORT_V1
+          Task ID: H1.5A-1
+          Issue: https://github.com/augusliang23-web/cc-h15a-claude-dispatch-lab/issues/1
+          Mode: SYNTHETIC_GITHUB_ONLY
+          Issue contract read: PASS
+          Claude/Codex/Antigravity/API calls: NOT_USED_BY_THIS_WORKFLOW
+          GitHub Action run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          Claim: test report emitted by this workflow; final gate requires independent ChatGPT GitHub readback.
+          Status: READY_FOR_CONTROL_PLANE_REVIEW
+          EOF
+          )"
+          posted_id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$issue/comments" \
+            -f "body=$report" --jq '.id')"
+          test -n "$posted_id"
+          observed="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$posted_id" --jq '.body')"
+          test "$observed" = "$report"
+          echo "Readback PASS; comment URL: https://github.com/$GITHUB_REPOSITORY/issues/$issue#issuecomment-$posted_id"
