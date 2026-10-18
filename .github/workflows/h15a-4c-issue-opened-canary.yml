@@ -1,0 +1,108 @@
+# H1.5A-4C: DRAFT / NOT ACTIVE until PR merged to default branch with explicit GO.
+# Strict one-time synthetic Issue-opened -> PR canary in isolated private lab.
+# This is NOT a generalized AI dispatch system. No schedule or manual fallback.
+name: H1.5A-4C Issue opened to Claude PR canary
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+concurrency:
+  group: h15a-4c-isolated-issue-canary
+  cancel-in-progress: false
+
+jobs:
+  only-one-authorized-canary:
+    name: Guard exact lab Issue, create one inert PR
+    if: ${{ github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' && github.event_name == 'issues' && github.event.action == 'opened' && github.ref == 'refs/heads/main' && github.actor == 'augusliang23-web' && github.event.issue.user.login == 'augusliang23-web' && github.event.issue.title == 'H15A4C_DISPATCH_CANARY_V1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: augusliang23-web/cc-h15a-claude-dispatch-lab
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      EXPECTED_ISSUE_TITLE: H15A4C_DISPATCH_CANARY_V1
+      EXPECTED_ISSUE_AUTHOR: augusliang23-web
+      CONTRACT_MARKER: H15A4C_DISPATCH_CONTRACT_V1
+      CANARY_PHRASE: blue lantern
+      BRANCH_NAME: lab/h15a4c-auto-issue-canary-v1
+      PR_TITLE: H15A4C_CLAUDE_CANARY_V1
+      FILE_PATH: tests/h15a4c-auto-issue-to-pr-canary-v1.txt
+    steps:
+      - name: Verify issue contract and ensure one-time target unused
+        id: guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]{0,6}$ ]] || { echo "HOLD: invalid Issue number"; exit 1; }
+          issue_json="$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER")"
+          jq -e \
+            --arg title "$EXPECTED_ISSUE_TITLE" \
+            --arg author "$EXPECTED_ISSUE_AUTHOR" \
+            --arg marker "$CONTRACT_MARKER" \
+            --arg phrase "$CANARY_PHRASE" \
+            '(.state == "open") and (.pull_request == null) and (.title == $title) and (.user.login == $author) and ((.body // "") | contains($marker)) and ((.body // "") | contains($phrase))' \
+            <<< "$issue_json" > /dev/null || { echo "HOLD: Issue contract mismatch"; exit 1; }
+
+          # GET-only fail-closed uniqueness checks. Any API failure => no dispatch.
+          gh api "repos/$GH_REPO/git/matching-refs/heads/$BRANCH_NAME" \
+            | jq -e 'length == 0' > /dev/null || { echo "HOLD: branch/ref already exists"; exit 1; }
+          gh api "repos/$GH_REPO/pulls?state=all&head=augusliang23-web:$BRANCH_NAME&base=main&per_page=100" \
+            | jq -e 'length == 0' > /dev/null || { echo "HOLD: matching PR already exists"; exit 1; }
+          base_sha="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "HOLD: invalid base SHA"; exit 1; }
+          printf 'base_sha=%s\n' "$base_sha" >> "$GITHUB_OUTPUT"
+          echo "PASS: exact Issue contract and one-time candidate unoccupied"
+
+      - name: Create one inert branch, fixture and PR
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.guard.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          # Issue body is never executed or copied. Static fixture; no checkout.
+          gh api -X POST "repos/$GH_REPO/git/refs" \
+            -f ref="refs/heads/$BRANCH_NAME" -f sha="$BASE_SHA" > /dev/null
+
+          fixture="H1.5A-4C synthetic Issue-opened dispatch canary.
+          Test phrase: blue lantern
+          Expected output: BLUE LANTERN
+          No executable content, source code, or secrets.
+          "
+          encoded="$(printf '%s' "$fixture" | base64 -w 0)"
+          jq -nc --arg content "$encoded" \
+            --arg message "test(h1.5a-4c): add inert Issue-opened canary fixture" \
+            --arg branch "$BRANCH_NAME" \
+            '{message: $message, content: $content, branch: $branch}' \
+            | gh api -X PUT "repos/$GH_REPO/contents/$FILE_PATH" --input - > /dev/null
+
+          body="H1.5A-4C synthetic Issue-opened canary.
+          Source Issue: #$ISSUE_NUMBER
+          Contract: H15A4C_DISPATCH_CONTRACT_V1
+          Test phrase: blue lantern
+          Expected output: BLUE LANTERN
+          Expected report marker: H15A4C_CLAUDE_CANARY_REPORT
+          No code edits, merge, deployment, or secret access.
+          "
+          gh api -X POST "repos/$GH_REPO/pulls" \
+            -f title="$PR_TITLE" -f head="$BRANCH_NAME" -f base=main \
+            -f body="$body" --jq '.html_url'
+          echo "Bridge completed; Claude execution and report are separate verification gates."
+          # No retries, cleanup, Issue comments, approvals, merge, or deployment.
+
+# GO GATES BEFORE MERGING CANDIDATE (not authorized):
+# 1. Explicit human approval to merge this workflow into the PRIVATE LAB main.
+# 2. Claude Routine must be stopped until prepared: ONLY H15A4C_CLAUDE_CANARY_V1,
+#    head lab/h15a4c-auto-issue-canary-v1, base main, repo exact lab.
+#    Runtime verifies author github-actions[bot], new contract marker & Issue link.
+# 3. Confirm account Pro headroom and Actions spending controls; one canary.
+# 4. After GO and merge, re-enable Routine; ONLY THEN create the exact Issue.
+# 5. Independently verify auto workflow run, bot PR, Claude report, no edits.
+# 6. Disable Routine immediately afterwards. Never promote to a general
+#    Issue dispatcher without a separate threat model, quotas, and review.
