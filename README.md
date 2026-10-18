@@ -116,3 +116,17 @@ disabled. AG2B-2 requires a separate Control Plane decision on trusted approvals
 atomic ownership and crash-safe persistence, then explicit human authorization.
 No merge/deploy or next-phase authorization is provided by these tests.
 See [product contract and design](docs/ag2b1-foundation.md).
+
+## AG2B-2 secure admission and recovery (offline only)
+
+[Security design, interfaces, test evidence and limitations](docs/ag2b2-security.md)
+cover independent Ed25519 test approvals, exact Issue revision binding, mock
+exclusive reservations, a durable private local journal, and conservative
+recovery. Run the same offline test command above: 85 tests (31 existing + 54 new).
+The existing dry-run stays unchanged. There is no live admission/claim/AI mode.
+
+The journal uses actual Node filesystem operations only in explicit local/test
+locations. Tests generate signing keys in memory and clean temporary journals.
+Do not point it at real tasks or treat its checksum as protection from a malicious
+same-user process. No GitHub reservation refs or task-state writes are performed.
+AG2B-3 requires new approval; this milestone does not activate dispatch.
