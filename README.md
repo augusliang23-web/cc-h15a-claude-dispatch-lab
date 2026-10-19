@@ -147,3 +147,14 @@ No live admission, human signer, claim write, daemon or Antigravity activation.
 Pure manifest/intent/recovery validators and two-process offline fault simulations
 add no live signer or writer. Run the same offline suite: 148 prior + 36 new = 184.
 First real reservation remains HOLD pending separate evidence and authorization.
+
+## One-Mac local preview (AG2B-3A-2B)
+
+On Mac, double-click **Open Local Preview.command** in Finder. It opens a local
+browser with an explicitly synthetic task. No commands or tokens need pasting.
+Click Refresh, inspect the revision/agent, then Approve Preview (with confirmation)
+or Reject. History survives restart; decisions never authorize GitHub or AI.
+Stop using the page's Stop button. Requires existing Node.js 20+; nothing installs.
+See the [five-minute Mac walkthrough and limits](docs/ag2b3a2b-local-preview.md).
+
+All offline tests: `node --test bridge/test/*.test.mjs test/*.test.mjs`.
