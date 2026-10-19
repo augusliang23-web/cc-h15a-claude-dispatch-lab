@@ -130,3 +130,12 @@ locations. Tests generate signing keys in memory and clean temporary journals.
 Do not point it at real tasks or treat its checksum as protection from a malicious
 same-user process. No GitHub reservation refs or task-state writes are performed.
 AG2B-3 requires new approval; this milestone does not activate dispatch.
+
+## AG2B-3A-1 GitHub read-only observations
+
+[GET-only adapter, manual read evidence and live-claim STOP gates](docs/ag2b3a1-readonly.md).
+`ReadOnlyGitHub` observes only the pinned private lab, Issues and exact claim-ref
+metadata. Every result denies execution; it cannot replace the mock claim provider.
+The optional manual smoke reads existing planning Issue #12 and expects a task
+rejection. It is excluded from offline CI and takes existing auth only via stdin.
+No live admission, human signer, claim write, daemon or Antigravity activation.
