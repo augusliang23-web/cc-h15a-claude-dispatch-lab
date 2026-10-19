@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local Review · 任務預覽</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><main><header><div><p class="eyebrow">ONE MAC · LOCAL PREVIEW</p><h1>先看清楚，再決定。</h1><p class="subtitle">這是一張本機預覽卡。你的決定只會留在這部 Mac。</p></div><button id="stop" class="quiet">停止並關閉服務</button></header>
+<section class="boundary"><strong>不會保留 GitHub 任務、不會執行 AI，也不會發布任何內容。</strong><p>本機點擊不是獨立人類身分驗證；真實執行仍被封鎖。</p></section>
+<div id="message" role="status" aria-live="polite">正在開啟本機工作階段…</div>
+<section class="card"><div class="card-head"><div><p class="eyebrow">待檢視任務</p><h2 id="title">尚未核對</h2></div><span id="badge" class="badge">HOLD</span></div>
+<p id="summary">請按「重新核對」載入預覽。重啟或重新整理頁面不會自動批准。</p>
+<dl id="fields"></dl><p class="redaction">原始 Issue 指令已遮蔽。只顯示經驗證的結構欄位，不顯示或執行不受信任的文字。</p>
+<div class="actions"><button id="refresh" class="quiet">重新核對 Refresh</button><button id="reject" class="danger" disabled>拒絕 Reject</button><button id="approve" class="primary" disabled>批准預覽 Approve Preview</button></div>
+</section>
+<section class="card"><div class="card-head"><h2>本機決定歷史</h2><span class="muted">不具執行授權效力</span></div><p id="history-empty" class="muted">目前沒有可顯示的紀錄；若狀態為 HOLD，歷史可能無法讀取。</p><ol id="history"></ol></section>
+<footer>手動開啟 · 僅限 127.0.0.1 · 無遠端資產 · 關閉頁面不會停止服務，請按上方停止按鈕。</footer>
+<dialog id="confirm"><h2>只批准這份本機預覽？</h2><p>Only records a local decision; does NOT reserve GitHub, run AI or publish anything.</p><p>此版本的本機決定一旦記錄，不能直接反轉。</p><div class="actions"><button id="cancel" class="quiet">取消</button><button id="confirm-approve" class="primary">確認批准預覽</button></div></dialog>
+</main></body></html>
