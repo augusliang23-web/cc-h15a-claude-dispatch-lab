@@ -2,12 +2,13 @@ name: AG2B offline safety CI
 
 on:
   pull_request:
-    types: [synchronize, reopened]
+    types: [opened, synchronize, reopened]
     branches: [main]
     paths:
       - 'bridge/**'
       - '.github/workflows/ag2b-offline-ci.yml'
       - 'docs/ag2b2-security.md'
+      - 'docs/ag2b3a1-readonly.md'
 
 permissions:
   contents: read
@@ -16,9 +17,9 @@ jobs:
   offline-safety:
     if: >-
       github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
-      github.event.pull_request.number == 11 &&
       github.event.pull_request.head.repo.full_name == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
-      github.head_ref == 'codex/ag2b2-secure-claim-recovery' &&
+      ((github.event.pull_request.number == 11 && github.head_ref == 'codex/ag2b2-secure-claim-recovery') ||
+       github.head_ref == 'codex/ag2b3a1-github-readonly-preflight') &&
       github.event.pull_request.draft == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
