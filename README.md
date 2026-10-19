@@ -139,3 +139,11 @@ metadata. Every result denies execution; it cannot replace the mock claim provid
 The optional manual smoke reads existing planning Issue #12 and expects a task
 rejection. It is excluded from offline CI and takes existing auth only via stdin.
 No live admission, human signer, claim write, daemon or Antigravity activation.
+
+## AG2B-3A-2A independent approval and reservation readiness
+
+[Approval ADR](docs/adr/0003-independent-approval-reservation.md) and
+[read-only preflight / first-write requirements](docs/ag2b3a2a-preflight.md).
+Pure manifest/intent/recovery validators and two-process offline fault simulations
+add no live signer or writer. Run the same offline suite: 148 prior + 36 new = 184.
+First real reservation remains HOLD pending separate evidence and authorization.
