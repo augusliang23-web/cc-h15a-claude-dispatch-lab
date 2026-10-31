@@ -163,7 +163,11 @@ export async function supervisedRun({
  const pid=child?.pid;
  if(!Number.isSafeInteger(pid)||pid<=1||
     !child.stdout||!child.stderr||
-    typeof child.once!=='function')return {error:'SPAWN_UNOBSERVABLE',status:null};
+    typeof child.once!=='function'){
+   child?.once?.('error',()=>{});
+   try{child?.kill?.('SIGKILL');}catch{}
+   return {error:'SPAWN_UNOBSERVABLE',status:null};
+ }
  let out=[],bytes=0,overflow=false,stderrPresent=false;
  let closed=false;
  const ended=new Promise(resolve=>{
