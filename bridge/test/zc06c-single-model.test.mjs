@@ -251,3 +251,52 @@ test('C25 a symlink inside HOME ancestry blocks claim replay',()=>withHome(async
  assert.equal(r.gate,'ZC06C_HOLD');
  assert.equal(called,0);
 }));
+
+test('C26 foreign-owned writable-ancestor substitution blocks model launch',()=>withHome(async home=>{
+ const foreign=path.dirname(home);
+ const altUid=(process.getuid?.()??1000)+12345;
+ const io=new Proxy(fs,{get(target,key){
+  if(key!=='lstatSync')return target[key];
+  return p=>{
+   const st=fs.lstatSync(p);
+   if(path.normalize(p)!==path.normalize(foreign))return st;
+   return new Proxy(st,{get(value,prop){return prop==='uid'?altUid:Reflect.get(value,prop);}});
+  };
+ }});
+ let called=0;
+ const out=await runSingle({platform:'darwin',home,io,env,
+  spawn:()=>{called++;return fake();}});
+ assert.equal(out.reason,'ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');
+ assert.equal(called,0);
+}));
+test('C27 unsafe settings ancestor permissions deny any provider spawn',()=>withHome(async home=>{
+ const folder=path.join(home,'.gemini');
+ fs.chmodSync(folder,0o777);
+ let called=0;
+ const out=await runSingle({platform:'darwin',home,env,
+  spawn:()=>{called++;return fake();}});
+ assert.equal(out.reason,'EFFECTIVE_DENY_POLICY_NOT_CONFIGURED');
+ assert.equal(called,0);
+ fs.chmodSync(folder,0o700);
+}));
+test('C28 symlinked settings ancestor cannot attest effective Deny',()=>withHome(async home=>{
+ const parent=path.join(home,'.gemini');
+ const target=path.join(parent,'real-cli');
+ const link=path.join(parent,'antigravity-cli');
+ fs.renameSync(link,target);
+ fs.symlinkSync(target,link);
+ assert.equal(inspectDenyPolicy({home}),false);
+}));
+test('C29 foreign-owned settings directory cannot attest effective Deny',()=>withHome(async home=>{
+ const other=path.join(home,'.gemini');
+ const altUid=(process.getuid?.()??1000)+12345;
+ const io=new Proxy(fs,{get(target,key){
+  if(key!=='lstatSync')return target[key];
+  return p=>{
+   const st=fs.lstatSync(p);
+   if(path.normalize(p)!==path.normalize(other))return st;
+   return new Proxy(st,{get(value,prop){return prop==='uid'?altUid:Reflect.get(value,prop);}});
+  };
+ }});
+ assert.equal(inspectDenyPolicy({home,io}),false);
+}));
