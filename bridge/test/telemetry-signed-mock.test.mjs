@@ -101,3 +101,28 @@ test('B10 event digest cannot silently be changed or reused',()=>{
  accepted(s.accept(c,{asOf:at(10)}));
  assert.notEqual(s.snapshot().last_digest,b.digest);
 });
+
+
+test('B11 rejects accessor-bearing event before any getter can change signed data',()=>{
+ const s=makeStore(),a=first();
+ let hits=0;
+ Object.defineProperty(a,'sequence',{enumerable:true,configurable:true,get(){
+   hits++;return hits>1?999:1;
+ }});
+ held(s.accept(a,{asOf:at(10)}));
+ assert.equal(hits,0);
+ assert.equal(s.snapshot().accepted_count,0);
+});
+
+test('B12 strict envelope rejects array session and coercible constructor IDs',()=>{
+ const store=makeStore(),e=first();
+ e.session_id=['MAC_S1'];
+ reseal(e,mac.privateKey);
+ held(store.accept(e,{asOf:at(10)}));
+ assert.throws(()=>new OfflineSignedTelemetryStore({
+   publicKeys:keys(),task_id:['ZC04B_TASK_01'],attempt_id:'ATTEMPT_01',
+ }));
+ assert.throws(()=>new OfflineSignedTelemetryStore({
+   publicKeys:keys(),task_id:'ZC04B_TASK_01',attempt_id:['ATTEMPT_01'],
+ }));
+});

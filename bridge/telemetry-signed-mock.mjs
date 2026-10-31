@@ -20,6 +20,21 @@ const exact=(x,fields)=>names(x)&&Object.keys(x).length===fields.length&&
 const iso=x=>typeof x==='string'&&ISO.test(x)&&Number.isFinite(Date.parse(x))&&
   new Date(x).toISOString()===x;
 const fail=()=>{throw Error('INVALID_SIGNED_EVENT');};
+// Use one immutable primitive-only snapshot throughout validation and commit.
+// Never call user-defined getters multiple times across signature verification.
+function snapshotInput(input) {
+  if (!exact(input, FULL)) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const clean = {};
+  for (const key of FULL) {
+    const item = descriptors[key];
+    if (!item || !Object.hasOwn(item, 'value') || !item.enumerable) fail();
+    const value = item.value;
+    if (!(value === null || typeof value === 'string' || typeof value === 'number')) fail();
+    clean[key] = value;
+  }
+  return Object.freeze(clean);
+}
 const payload=x=>JSON.stringify(Object.fromEntries(KEY.map(k=>[k,x[k]])));
 const digest=s=>createHash('sha256').update(s,'utf8').digest('hex');
 const error=(reason='UNVERIFIED_OR_REPLAY')=>({status:'HOLD',reason,simulated:true,accepted:false});
@@ -33,22 +48,24 @@ export class OfflineSignedTelemetryStore {
   #publicKeys;#task;#attempt;#seq=0;#digest=null;#at=null;
   #sessions=new Map();#seen=new Set();#count=0;
   constructor({publicKeys,task_id,attempt_id}) {
-    if (!(publicKeys instanceof Map) || !ID.test(task_id||'') ||
-        !ID.test(attempt_id||'') || publicKeys.size!==2) fail();
+    if (!(publicKeys instanceof Map) || (typeof task_id!=='string'||!ID.test(task_id)) ||
+        (typeof attempt_id!=='string'||!ID.test(attempt_id)) || publicKeys.size!==2) fail();
     for(const name of Object.keys(TYPE)){
       const key=publicKeys.get(name);
       if(!key||key.type!=='public'||key.asymmetricKeyType!=='ed25519')fail();
     }
     this.#publicKeys=new Map(publicKeys);this.#task=task_id;this.#attempt=attempt_id;
   }
-  accept(event,{asOf}={}) {
+  accept(rawEvent,{asOf}={}) {
     try{
-      if(!iso(asOf)||!exact(event,FULL)||
+      const event=snapshotInput(rawEvent);
+      if(!iso(asOf)||
          Buffer.byteLength(JSON.stringify(event))>2048||
          event.version!==VERSION||event.repository!==REPOSITORY||
          event.task_id!==this.#task||event.attempt_id!==this.#attempt||
          !Object.hasOwn(TYPE,event.producer)||
-         !TYPE[event.producer].has(event.type)||!ID.test(event.session_id||'')||
+         !TYPE[event.producer].has(event.type)||
+         typeof event.session_id!=='string'||!ID.test(event.session_id)||
          !Number.isSafeInteger(event.sequence)||event.sequence!==this.#seq+1||
          !iso(event.observed_at)||Date.parse(event.observed_at)>Date.parse(asOf)||
          (this.#at!==null && Date.parse(event.observed_at)<this.#at)||
