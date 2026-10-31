@@ -117,3 +117,18 @@ test('T14 empty or unsafe inputs never report active/complete',()=>{
  const x=projectTelemetry([queued()],{asOf:'bad'});
  assert.equal(x.status,'HOLD');
 });
+
+
+test('T15 mismatched process heartbeat never refreshes another process',()=>{
+ const unrelated = heartbeat(4,58);
+ unrelated.proof.ref = 'process:unrelated';
+ const res=projectTelemetry([queued(),claimed(),running(),unrelated],{
+   asOf:time(59),staleAfterMs:10000,noProgressAfterMs:20000,
+ });
+ assert.equal(res.status,'HOLD');
+ assert.equal(res.stage,'UNVERIFIED');
+ const original=projectTelemetry([queued(),claimed(),running()],{
+   asOf:time(59),staleAfterMs:10000,noProgressAfterMs:20000,
+ });
+ assert.equal(original.health,'STALLED');
+});

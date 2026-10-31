@@ -30,3 +30,7 @@ Both commands use local in-repo fixture data only. The demo uses a pinned 2026-1
 - ZC-04B: **separate** permission required for least-privilege Mac → GitHub telemetry writes and provenance/replay controls.
 - ZC-04C: live ChatGPT operational view and optional notifications only after data can be verified.
 - PR #22's two Codex P2 findings (ancestor symlink / fsync durability) remain unresolved. This prototype is NOT a workaround and MUST NOT authorize real agent execution.
+
+## Codex independent review hardening
+
+PR #26 initial Codex review found that RUNNING process heartbeats were format-validated but not bound to the process reference announced in RUNNING. The projection now pins `runningRef`, requires exact equality for each RUNNING heartbeat, and rejects mismatched process identities with a sanitized HOLD. T15 is the regression. This remains simulated-only; future live telemetry must authenticate event producers and bind to trustworthy process identity.

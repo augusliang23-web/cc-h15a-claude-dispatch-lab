@@ -44,6 +44,7 @@ export function projectTelemetry(events, {asOf, staleAfterMs = 120000, noProgres
         Buffer.byteLength(JSON.stringify(events)) > 65536) fail();
     let stage = null, task = null, previousAt = null, lastSeen = null;
     let lastProgress = null, artifactSha = null, reviewRef = null, passRef = null;
+    let runningRef = null;
     let seenHeartbeat = false, heartbeatCount = 0, proofCount = 0;
     const asOfMs = Date.parse(asOf);
     for (let i = 0; i < events.length; i++) {
@@ -66,7 +67,8 @@ export function projectTelemetry(events, {asOf, staleAfterMs = 120000, noProgres
             !allowed.has(e.actor + '/' + e.source) ||
             (stage === 'RUNNING' && (e.actor !== 'antigravity' ||
               e.source !== 'mac-relay' || e.proof.kind !== 'PROCESS' ||
-              !/^process:[A-Za-z0-9._-]{1,64}$/.test(e.proof.ref))) ||
+              !/^process:[A-Za-z0-9._-]{1,64}$/.test(e.proof.ref) ||
+              e.proof.ref !== runningRef)) ||
             (stage === 'REVIEWING' && (e.actor !== 'codex' ||
               e.source !== 'codex-cloud' || e.proof.kind !== 'REVIEW_RUNNING' ||
               e.proof.ref !== reviewRef))) fail();
@@ -86,6 +88,7 @@ export function projectTelemetry(events, {asOf, staleAfterMs = 120000, noProgres
       }
       if (stage === null && e.type !== 'QUEUED') fail();
       if (stage !== null && !NEXT[stage].includes(e.type)) fail();
+      if (e.type === 'RUNNING') runningRef = e.proof.ref;
       if (e.type === 'ARTIFACT_READY') artifactSha = e.proof.ref.slice(4);
       if (e.type === 'REVIEWING') {
         if (!artifactSha || e.proof.ref.split(':')[1] !== artifactSha) fail();
