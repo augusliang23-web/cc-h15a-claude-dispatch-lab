@@ -52,13 +52,13 @@ test('C05 no actual model process without overages reconfirmation',()=>withHome(
  const r=await runSingle({platform:'darwin',home,env:{},spawn:()=>{n++;return fake();}});
  assert.equal(r.reason,'OVERAGES_OFF_NOT_RECONFIRMED');assert.equal(n,0);
 }));
-test('C06 alternate API environment blocks model invocation',()=>withHome(home=>{
+test('C06 alternate API environment blocks model invocation',()=>withHome(async home=>{
  let count=0;
  const r=await runSingle({platform:'darwin',home,
  env:{...env,GEMINI_API_KEY:'present'},spawn:()=>{count++;return fake();}});
  assert.equal(r.reason,'ALTERNATE_PROVIDER_ENV_DETECTED');assert.equal(count,0);
 }));
-test('C07 one local claim allows only ONE injected model process',()=>withHome(home=>{
+test('C07 one local claim allows only ONE injected model process',()=>withHome(async home=>{
  let count=0;const spawn=()=>{count++;return fake();};
  const first=await runSingle({platform:'darwin',home,env,spawn});
  assert.equal(first.gate,'ZC06C_SINGLE_RESPONSE_OBSERVED');
@@ -66,13 +66,13 @@ test('C07 one local claim allows only ONE injected model process',()=>withHome(h
  assert.equal(second.reason,'ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');
  assert.equal(count,1);
 }));
-test('C08 failed provider response is never retried',()=>withHome(home=>{
+test('C08 failed provider response is never retried',()=>withHome(async home=>{
  let count=0;const spawn=()=>{count++;return {...fake(),status:1};};
  assert.equal((await runSingle({platform:'darwin',home,env,spawn})).gate,'ZC06C_HOLD');
  assert.equal((await runSingle({platform:'darwin',home,env,spawn})).gate,'ZC06C_HOLD');
  assert.equal(count,1);
 }));
-test('C09 symlinked CLI binary rejected',()=>withHome(home=>{
+test('C09 symlinked CLI binary rejected',()=>withHome(async home=>{
  const file=path.join(home,'.local','bin','agy');
  fs.unlinkSync(file);fs.symlinkSync('/bin/echo',file);
  let called=false;const spawn=()=>{called=true;return fake();};
@@ -103,7 +103,7 @@ test('C13 model quota not invented if provider omits token usage',()=>{
  assert.equal(out.reported_model,'NOT_REPORTED');
 });
 
-test('C14 P1: missing deny is HOLD without executing any provider',()=>withHome(home=>{
+test('C14 P1: missing deny is HOLD without executing any provider',()=>withHome(async home=>{
  const config=path.join(home,'.gemini','antigravity-cli','settings.json');
  fs.writeFileSync(config,'{}',{mode:0o600});
  let count=0;
@@ -111,7 +111,7 @@ test('C14 P1: missing deny is HOLD without executing any provider',()=>withHome(
  assert.equal(output.reason,'EFFECTIVE_DENY_POLICY_NOT_CONFIGURED');
  assert.equal(count,0);
 }));
-test('C15 P1: all major tool classes require explicit Deny',()=>withHome(home=>{
+test('C15 P1: all major tool classes require explicit Deny',()=>withHome(async home=>{
  const config=path.join(home,'.gemini','antigravity-cli','settings.json');
  for(const omitted of REQUIRED_DENY){
   fs.writeFileSync(config,JSON.stringify({permissions:{
@@ -129,7 +129,7 @@ test('C16 P2: provider-reported arbitrary model text is not emitted',()=>{
  assert.equal(r.reason,'MODEL_MISMATCH');
  assert.equal(JSON.stringify(r).includes(privateText),false);
 });
-test('C17 P2: world-writable HOME cannot be used as Claim parent',()=>withHome(home=>{
+test('C17 P2: world-writable HOME cannot be used as Claim parent',()=>withHome(async home=>{
  fs.chmodSync(home,0o777);
  let calls=0;
  const r=await runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
@@ -138,7 +138,7 @@ test('C17 P2: world-writable HOME cannot be used as Claim parent',()=>withHome(h
  assert.equal(calls,0);
  fs.chmodSync(home,0o700);
 }));
-test('C18 policy rejects unsafe billing provider config',()=>withHome(home=>{
+test('C18 policy rejects unsafe billing provider config',()=>withHome(async home=>{
  const config=path.join(home,'.gemini','antigravity-cli','settings.json');
  fs.writeFileSync(config,JSON.stringify({
   modelProvider:'gemini',permissions:{deny:REQUIRED_DENY}
