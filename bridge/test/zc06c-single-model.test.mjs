@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {EventEmitter} from 'node:events';
-import {CONTRACT,ARGS,safeEnvironment,evaluate,runSingle,supervisedRun,REQUIRED_DENY,inspectDenyPolicy} from '../zc06c-single-model.mjs';
+import {CONTRACT,ARGS,safeEnvironment,evaluate,runSingle,supervisedRun,REQUIRED_DENY,inspectDenyPolicy,inspectAgYExecutable} from '../zc06c-single-model.mjs';
 const withHome=async fn=>{
  const h=fs.mkdtempSync(path.join(os.tmpdir(),'zc06c-test-'));
  fs.chmodSync(h,0o700);
@@ -76,7 +76,7 @@ test('C09 symlinked CLI binary rejected',()=>withHome(async home=>{
  const file=path.join(home,'.local','bin','agy');
  fs.unlinkSync(file);fs.symlinkSync('/bin/echo',file);
  let called=false;const spawn=()=>{called=true;return fake();};
- assert.equal((await runSingle({platform:'darwin',home,env,spawn})).reason,'CLI_NOT_REGULAR_EXECUTABLE');
+ assert.equal((await runSingle({platform:'darwin',home,env,spawn})).reason,'CLI_NOT_TRUSTED_EXECUTABLE');
  assert.equal(called,false);
 }));
 test('C10 environment allowlist does not expose keys or GitHub credentials',()=>{
@@ -299,4 +299,51 @@ test('C29 foreign-owned settings directory cannot attest effective Deny',()=>wit
   };
  }});
  assert.equal(inspectDenyPolicy({home,io}),false);
+}));
+
+test('C30 reject group/world writable AgY CLI executable',()=>withHome(async home=>{
+ const file=path.join(home,'.local','bin','agy');
+ fs.chmodSync(file,0o777);
+ assert.equal(inspectAgYExecutable({home}),false);
+ let calls=0;
+ const r=await runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
+ assert.equal(r.reason,'CLI_NOT_TRUSTED_EXECUTABLE');
+ assert.equal(calls,0);
+}));
+test('C31 reject group/world writable binary parent directory',()=>withHome(async home=>{
+ const dir=path.join(home,'.local','bin');
+ fs.chmodSync(dir,0o777);
+ assert.equal(inspectAgYExecutable({home}),false);
+ let calls=0;
+ const r=await runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
+ assert.equal(r.reason,'CLI_NOT_TRUSTED_EXECUTABLE');
+ assert.equal(calls,0);
+}));
+test('C32 reject symlinked AgY CLI binary parent',()=>withHome(async home=>{
+ const dir=path.join(home,'.local','bin');
+ const relocated=path.join(home,'.local','bin-real');
+ fs.renameSync(dir,relocated);
+ fs.symlinkSync(relocated,dir);
+ assert.equal(inspectAgYExecutable({home}),false);
+ let calls=0;
+ const r=await runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
+ assert.equal(r.reason,'CLI_NOT_TRUSTED_EXECUTABLE');
+ assert.equal(calls,0);
+}));
+test('C33 reject untrusted executable ownership even if executable',()=>withHome(async home=>{
+ const file=path.join(home,'.local','bin','agy');
+ const foreign=(process.getuid?.()??1000)+12345;
+ const io=new Proxy(fs,{get(target,key){
+  if(key!=='lstatSync')return target[key];
+  return p=>{
+   const st=fs.lstatSync(p);
+   if(path.normalize(p)!==path.normalize(file))return st;
+   return new Proxy(st,{get(value,prop){return prop==='uid'?foreign:Reflect.get(value,prop);}});
+  };
+ }});
+ assert.equal(inspectAgYExecutable({home,io}),false);
+ let calls=0;
+ const r=await runSingle({platform:'darwin',home,io,env,spawn:()=>{calls++;return fake();}});
+ assert.equal(r.reason,'CLI_NOT_TRUSTED_EXECUTABLE');
+ assert.equal(calls,0);
 }));
