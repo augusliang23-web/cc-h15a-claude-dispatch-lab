@@ -4,13 +4,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {CONTRACT,ARGS,safeEnvironment,evaluate,runSingle} from '../zc06c-single-model.mjs';
+import {CONTRACT,ARGS,safeEnvironment,evaluate,runSingle,REQUIRED_DENY,inspectDenyPolicy} from '../zc06c-single-model.mjs';
 const withHome=fn=>{
  const h=fs.mkdtempSync(path.join(os.tmpdir(),'zc06c-test-'));
  fs.chmodSync(h,0o700);
  try{
    fs.mkdirSync(path.join(h,'.local','bin'),{recursive:true,mode:0o700});
    fs.writeFileSync(path.join(h,'.local','bin','agy'),'#!/bin/sh\nexit 99\n',{mode:0o700});
+   const settings=path.join(h,'.gemini','antigravity-cli');
+   fs.mkdirSync(settings,{recursive:true,mode:0o700});
+   fs.writeFileSync(path.join(settings,'settings.json'),
+      JSON.stringify({toolPermission:'request-review',
+        permissions:{deny:[...REQUIRED_DENY]}}),{mode:0o600});
    return fn(h);
  }finally{fs.rmSync(h,{recursive:true,force:true});}
 };
@@ -96,3 +101,46 @@ test('C13 model quota not invented if provider omits token usage',()=>{
  assert.equal(out.usage_total_tokens,null);
  assert.equal(out.reported_model,'NOT_REPORTED');
 });
+
+test('C14 P1: missing deny is HOLD without executing any provider',()=>withHome(home=>{
+ const config=path.join(home,'.gemini','antigravity-cli','settings.json');
+ fs.writeFileSync(config,'{}',{mode:0o600});
+ let count=0;
+ const output=runSingle({platform:'darwin',home,env,spawn:()=>{count++;return fake();}});
+ assert.equal(output.reason,'EFFECTIVE_DENY_POLICY_NOT_CONFIGURED');
+ assert.equal(count,0);
+}));
+test('C15 P1: all major tool classes require explicit Deny',()=>withHome(home=>{
+ const config=path.join(home,'.gemini','antigravity-cli','settings.json');
+ for(const omitted of REQUIRED_DENY){
+  fs.writeFileSync(config,JSON.stringify({permissions:{
+   deny:REQUIRED_DENY.filter(x=>x!==omitted)}}));
+  assert.equal(inspectDenyPolicy({home}),false,omitted);
+ }
+}));
+test('C16 P2: provider-reported arbitrary model text is not emitted',()=>{
+ const privateText='private/path/token=XYZ';
+ const input={...fake(),stdout:JSON.stringify({
+   status:'SUCCESS',response:CONTRACT.answer,model:privateText
+ })};
+ const r=evaluate(input,true);
+ assert.equal(r.gate,'ZC06C_HOLD');
+ assert.equal(r.reason,'MODEL_MISMATCH');
+ assert.equal(JSON.stringify(r).includes(privateText),false);
+});
+test('C17 P2: world-writable HOME cannot be used as Claim parent',()=>withHome(home=>{
+ fs.chmodSync(home,0o777);
+ let calls=0;
+ const r=runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
+ assert.equal(r.gate,'ZC06C_HOLD');
+ assert.equal(r.reason,'ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');
+ assert.equal(calls,0);
+ fs.chmodSync(home,0o700);
+}));
+test('C18 policy rejects unsafe billing provider config',()=>withHome(home=>{
+ const config=path.join(home,'.gemini','antigravity-cli','settings.json');
+ fs.writeFileSync(config,JSON.stringify({
+  modelProvider:'gemini',permissions:{deny:REQUIRED_DENY}
+ }));
+ assert.equal(inspectDenyPolicy({home}),false);
+}));
