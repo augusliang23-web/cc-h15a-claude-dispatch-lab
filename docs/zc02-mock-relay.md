@@ -45,3 +45,26 @@ result writeback, or ChatGPT final closed-loop review. These are later gates.
 
 The existing AG2B live-claim/approval guards remain untouched; the mock
 receipt neither bypasses them nor qualifies for live execution.
+
+## macOS CLI entrypoint verification / first-run exit-code gate
+
+A Mac smoke run on 2026-10-31 exposed a **silent zero exit with no JSON** when
+Node was invoked through macOS's `/var` alias for `/private/var`. The fix
+compares `fs.realpathSync` paths for the CLI argument and module URL.
+Regression Z08 checks both path identities; Z09 launches the CLI through a
+symlink using an **invalid** argument and requires explicit `HOLD` exit 2.
+The regression intentionally makes **no GitHub request and no local claim**.
+
+For any future separately authorized **fresh** canary, acceptance MUST check:
+- First invocation: exit code 0 **AND** nonempty JSON with
+  `status: MOCK_COMPLETED_LOCAL_ONLY` (exit code 0 alone is insufficient).
+- Second invocation: exit code 2 **AND** JSON `status: HOLD` with
+  `reason: ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN`.
+- On absent/invalid JSON, fail closed. Never record success from an empty stdout.
+
+The owner's Mac has **already** successfully created a durable claim and
+receipt for Issue #21 in `~/.local/state/zc02-mock-relay` during the canonical
+path smoke test. **Do not delete these files or re-run Issue #21's `--once` path**
+to make this fix appear green. The hosted regression is intentionally offline.
+This patch alone does not authorize installation, automatic polling, model
+calls, real dispatch, branch merging or production changes.

@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   REPO, ISSUE_NUMBER, ISSUE_ID, ISSUE_NODE, TITLE, EXPECTED,
-  verifyCanary, fetchPinnedCanary, executeMock, runOnce,
+  verifyCanary, fetchPinnedCanary, executeMock, runOnce, isDirectInvocation,
 } from '../zc02-mock-relay.mjs';
 
 const API = `https://api.github.com/repos/${REPO}`;
@@ -121,4 +123,37 @@ test('Z07 GitHub read failure/timeout/no JSON fails closed without local writes'
       assert.ok(!JSON.stringify(r).includes('SECRET'));
       assert.deepEqual(fileList(dir),[]);
     }
+  }));
+
+
+test('Z08 CLI entry identity accepts canonical and symlinked paths', () =>
+  withDir(root => {
+    const actual = fileURLToPath(new URL('../zc02-mock-relay.mjs', import.meta.url));
+    const alias = path.join(root, 'linked-bridge');
+    fs.symlinkSync(path.dirname(actual), alias, 'dir');
+    assert.equal(isDirectInvocation(actual), true);
+    assert.equal(isDirectInvocation(path.join(alias, path.basename(actual))), true);
+    assert.equal(isDirectInvocation(path.join(root, 'missing.mjs')), false);
+    assert.equal(isDirectInvocation(null), false);
+  }));
+
+test('Z09 symlinked CLI entry does not silently exit 0; rejects unsafe args offline', () =>
+  withDir(root => {
+    const actual = fileURLToPath(new URL('../zc02-mock-relay.mjs', import.meta.url));
+    const alias = path.join(root, 'linked-bridge');
+    fs.symlinkSync(path.dirname(actual), alias, 'dir');
+    // Invalid CLI args must HOLD before any GitHub GET, local claim or model call.
+    const result = spawnSync(process.execPath,
+      [path.join(alias, path.basename(actual)), '--not-once'],
+      {encoding: 'utf8', timeout: 4000, env: {
+        ...process.env, GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0',
+      }});
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 2);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      status: 'HOLD', reason: 'ONLY_EXPLICIT_ONCE_SUPPORTED',
+      execution_allowed: false, simulated: true,
+    });
+    assert.equal(result.stderr, '');
+    assert.deepEqual(fileList(root), ['linked-bridge']);
   }));

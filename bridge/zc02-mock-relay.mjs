@@ -118,7 +118,18 @@ export function runOnce({spawn = spawnSync, stateDir = path.join(os.homedir(), '
   return executeMock({issue: fetched.issue, stateDir});
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// macOS may report /var via argv and /private/var via import.meta.url.
+// Compare real file identities rather than lexical spellings of their paths.
+// A failed resolution is never evidence that this module is the CLI entrypoint.
+export function isDirectInvocation(entry = process.argv[1]) {
+  if (typeof entry !== 'string' || entry.length === 0) return false;
+  try {
+    return fs.realpathSync(path.resolve(entry)) ===
+      fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch { return false; }
+}
+
+if (isDirectInvocation()) {
   const answer = process.argv.length === 3 && process.argv[2] === '--once'
     ? runOnce() : hold('ONLY_EXPLICIT_ONCE_SUPPORTED');
   process.stdout.write(JSON.stringify(answer) + '\n');
