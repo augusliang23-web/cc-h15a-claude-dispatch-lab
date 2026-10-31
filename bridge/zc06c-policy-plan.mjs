@@ -44,7 +44,7 @@ export function planRestrictedPolicy(originalText) {
    deny:[...new Set([...(permissions.deny||[]),...REQUIRED_DENY])]},
  };
  const temporaryText=JSON.stringify(restricted,null,2)+'\n';
- return Object.freeze({
+ const plan={
   gate:'ZC06C_OFFLINE_POLICY_PLAN_ONLY',
   settings_changed:false,model_called:false,
   original_sha256:digest(originalText),
@@ -52,10 +52,13 @@ export function planRestrictedPolicy(originalText) {
   original_bytes:Buffer.byteLength(originalText),
   temporary_bytes:Buffer.byteLength(temporaryText),
   required_deny_count:REQUIRED_DENY.length,
-  // Internal-only bytes for a future separately authorized transaction.
-  // NEVER print/serialize this field to GitHub, stdout, or user-facing logs.
-  temporaryText,
+ };
+ // Internal-only non-enumerable field, omitted by JSON.stringify and default
+ // inspection. Still sensitive if the caller explicitly reads it.
+ Object.defineProperty(plan,'temporaryText',{
+  value:temporaryText,enumerable:false,writable:false,
  });
+ return Object.freeze(plan);
 }
 
 // Does not write anything. A changed settings digest is a STOP, not an
