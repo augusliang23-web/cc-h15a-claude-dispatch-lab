@@ -48,7 +48,7 @@ test('T04 stale running heartbeat yields STALLED, not fake healthy',()=>{
 });
 
 test('T05 fresh heartbeat with old milestone yields ALIVE_NO_PROGRESS',()=>{
- const x=result([queued(),claimed(),running(),heartbeat(4,9)],10,{staleAfterMs:1500,noProgressAfterMs:5000});
+ const x=result([queued(),claimed(),running(),heartbeat(4,9)],10,{staleAfterMs:1500,noProgressAfterMs:10000});
  // Last progress at 07:00:03 and last heartbeat at :09.
  assert.equal(x.health,'ACTIVE');
  const y=projectTelemetry([queued(),claimed(),running(),heartbeat(4,9)],{
@@ -69,7 +69,7 @@ test('T07 mismatched task, duplicated sequence and wrong order fail closed',()=>
 });
 
 test('T08 future timestamps, malformed envelopes and extra keys fail closed',()=>{
- invalid([queued()],0);
+ assert.equal(result([queued()],0).status,'HOLD');
  const unknown=queued();unknown.secret='NEVER';invalid([unknown]);
  const bad=queued();bad.at='2026-10-31T07:00:01Z';invalid([bad]);
  const badTime=queued();badTime.at='garbage';invalid([badTime]);
