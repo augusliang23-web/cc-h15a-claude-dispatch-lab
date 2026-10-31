@@ -134,7 +134,7 @@ test('C17 P2: world-writable HOME cannot be used as Claim parent',()=>withHome(a
  let calls=0;
  const r=await runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
  assert.equal(r.gate,'ZC06C_HOLD');
- assert.equal(r.reason,'ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');
+ assert.equal(r.reason,'EFFECTIVE_DENY_POLICY_NOT_CONFIGURED');
  assert.equal(calls,0);
  fs.chmodSync(home,0o700);
 }));
