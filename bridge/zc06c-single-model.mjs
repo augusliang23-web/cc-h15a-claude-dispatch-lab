@@ -1,0 +1,139 @@
+// ZC-06C: owner-launched ONE REAL provider call, never repeated or automated.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+export const CONTRACT=Object.freeze({
+  task:'ZC06C_GEMINI_SINGLE_CALL_20261031_A1',
+  model:'gemini-3.8-flash-low',
+  answer:'BLUE LANTERN ZC06C-20261031-A1',
+  timeoutMs:45000,
+  claimDir:'zc06c-model-once',
+});
+export const ARGS=Object.freeze([
+  '-p', 'Return exactly this line with no other characters: '+CONTRACT.answer+
+    '. Do not call tools, run commands, read files, or write files.',
+  '--model',CONTRACT.model,
+  '--output-format','json',
+  '--mode=plan',
+  '--sandbox',
+  '--disable-slash-commands',
+  '--print-timeout','40s',
+]);
+const hold=reason=>({gate:'ZC06C_HOLD',reason,model_called:false,
+  model:CONTRACT.model,repeat_allowed:false,billing_attested:false});
+function dirSync(io,dir){
+  const fd=io.openSync(dir,'r');
+  try{io.fsyncSync(fd);}finally{io.closeSync(fd);}
+}
+function reserveOne(io,home){
+  if(typeof home!=='string'||!path.isAbsolute(home))throw Error('INVALID_HOME');
+  const own=process.getuid?.();
+  const canonical=io.realpathSync(home);
+  if(!io.lstatSync(canonical).isDirectory()||io.lstatSync(canonical).isSymbolicLink()||
+     (own!==undefined&&io.lstatSync(canonical).uid!==own))
+    throw Error('UNSAFE_HOME');
+  let parent=canonical;
+  for(const name of ['.local','state',CONTRACT.claimDir]){
+    const next=path.join(parent,name);
+    let st;
+    try{st=io.lstatSync(next);}
+    catch(e){
+      if(e.code!=='ENOENT')throw e;
+      io.mkdirSync(next,{mode:0o700});
+      dirSync(io,parent);
+      st=io.lstatSync(next);
+    }
+    if(!st.isDirectory()||st.isSymbolicLink()||
+       (st.mode&0o077)!==0||(own!==undefined&&st.uid!==own))
+      throw Error('UNSAFE_CLAIM_PATH');
+    parent=next;
+  }
+  const file=path.join(parent,CONTRACT.task+'.claim');
+  let fd;
+  try{
+    fd=io.openSync(file,'wx',0o600);
+    const line=Buffer.from(CONTRACT.task+'\n','utf8');
+    const size=io.writeSync(fd,line,0,line.length,0);
+    if(size!==line.length)throw Error('SHORT_WRITE');
+    io.fsyncSync(fd);io.closeSync(fd);fd=undefined;
+    dirSync(io,parent);
+  }finally{if(fd!==undefined){try{io.closeSync(fd);}catch{}}}
+}
+export function safeEnvironment({home=os.homedir(),tmp=os.tmpdir(),pathValue=process.env.PATH}={}){
+  // Explicit allowlist: no cloud credentials, PATs, model-provider API keys,
+  // shell startup overrides, or GitHub/SSH environment forwarded to AgY.
+  return {HOME:home,TMPDIR:tmp,PATH:pathValue||'/usr/bin:/bin',
+    LANG:'C',LC_ALL:'C',CI:'true',NO_COLOR:'1'};
+}
+export function evaluate(child,workspaceOk) {
+  const basic={model:CONTRACT.model,repeat_allowed:false,billing_attested:false,
+    agent_health_verified:false,one_provider_process_attempted:true};
+  if(!workspaceOk)return {gate:'ZC06C_HOLD',reason:'WORKSPACE_CHANGED',...basic};
+  if(!child||child.error||child.signal||child.status!==0||
+     typeof child.stdout!=='string'||Buffer.byteLength(child.stdout)>32768)
+    return {gate:'ZC06C_HOLD',reason:'CLI_NONZERO_TIMEOUT_OR_OUTPUT_INVALID',...basic};
+  let value;
+  try{value=JSON.parse(child.stdout);}catch{return {gate:'ZC06C_HOLD',reason:'INVALID_JSON',...basic};}
+  if(!value||typeof value!=='object'||Array.isArray(value)||
+     value.status!=='SUCCESS'||typeof value.response!=='string')
+    return {gate:'ZC06C_HOLD',reason:'CLI_NON_SUCCESS',...basic};
+  const exact=value.response.trim()===CONTRACT.answer;
+  const usage=value.usage;
+  const count=usage&&typeof usage==='object'&&
+    Number.isSafeInteger(usage.total_tokens)&&usage.total_tokens>=0?
+    usage.total_tokens:null;
+  return {gate:exact?'ZC06C_SINGLE_RESPONSE_OBSERVED':'ZC06C_HOLD',
+    reason:exact?'MATCHED_CHALLENGE':'RESPONSE_MISMATCH',
+    response_matched:exact,reported_model:typeof value.model==='string'?value.model:'NOT_REPORTED',
+    usage_total_tokens:count,tool_use_verified_absent:false,
+    ...basic};
+}
+export function runSingle({platform=process.platform,home=os.homedir(),io=fs,
+  spawn=spawnSync,temp=os.tmpdir(),env=process.env}={}) {
+  if(platform!=='darwin')return hold('MAC_ONLY');
+  if(process.getuid?.()===0)return hold('NO_ROOT');
+  if(env.ZC06C_OVERAGES_OFF_CONFIRMED!=='YES')return hold('OVERAGES_OFF_NOT_RECONFIRMED');
+  // Don't forward a separately configured direct-to-API billing environment.
+  if(['GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_APPLICATION_CREDENTIALS',
+       'ANTHROPIC_API_KEY','OPENAI_API_KEY'].some(k=>Boolean(env[k])))
+    return hold('ALTERNATE_PROVIDER_ENV_DETECTED');
+  const binary=path.join(home,'.local','bin','agy');
+  try{
+    const st=io.lstatSync(binary);
+    if(!st.isFile()||st.isSymbolicLink()||!(st.mode&0o111))
+      return hold('CLI_NOT_REGULAR_EXECUTABLE');
+  }catch{return hold('CLI_UNAVAILABLE');}
+  try{reserveOne(io,home);}
+  catch{return hold('ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');}
+  let workspace;
+  try{
+    workspace=io.mkdtempSync(path.join(temp,'zc06c-empty-'));
+    io.chmodSync(workspace,0o500);
+  }catch{return hold('ISOLATED_WORKSPACE_FAILED');}
+  let child;
+  try{
+    child=spawn(binary,ARGS,{
+      cwd:workspace,shell:false,encoding:'utf8',
+      timeout:CONTRACT.timeoutMs,maxBuffer:32768,
+      windowsHide:true,input:'',
+      env:safeEnvironment({home,tmp:temp,pathValue:env.PATH}),
+    });
+  }catch{child={error:true};}
+  let empty=false;
+  try{empty=io.readdirSync(workspace).length===0;}catch{}
+  // Do not delete non-empty workspace; preserve evidence for investigation.
+  if(empty){try{io.chmodSync(workspace,0o700);io.rmdirSync(workspace);}catch{}}
+  return evaluate(child,empty);
+}
+export function direct(entry,url,io=fs){
+ try{return typeof entry==='string'&&io.realpathSync(path.resolve(entry))===io.realpathSync(fileURLToPath(url));}
+ catch{return false;}
+}
+if(direct(process.argv[1],import.meta.url)){
+  const answer=process.argv.length===3&&process.argv[2]==='--once'?
+    runSingle():hold('ONLY_EXPLICIT_ONCE_SUPPORTED');
+  process.stdout.write(JSON.stringify(answer)+'\n');
+  if(answer.gate!=='ZC06C_SINGLE_RESPONSE_OBSERVED')process.exitCode=2;
+}
