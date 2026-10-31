@@ -1,0 +1,58 @@
+[
+  {
+    "version": "ZC04_TELEMETRY_MOCK_V1",
+    "repository": "augusliang23-web/cc-h15a-claude-dispatch-lab",
+    "task_id": "ZC-04-TELEMETRY-MOCK-01",
+    "sequence": 1,
+    "at": "2026-10-31T07:00:01.000Z",
+    "actor": "control-plane",
+    "source": "github",
+    "type": "QUEUED",
+    "proof": {
+      "kind": "ISSUE",
+      "ref": "issue:25"
+    }
+  },
+  {
+    "version": "ZC04_TELEMETRY_MOCK_V1",
+    "repository": "augusliang23-web/cc-h15a-claude-dispatch-lab",
+    "task_id": "ZC-04-TELEMETRY-MOCK-01",
+    "sequence": 2,
+    "at": "2026-10-31T07:00:02.000Z",
+    "actor": "antigravity",
+    "source": "mac-relay",
+    "type": "CLAIMED",
+    "proof": {
+      "kind": "LOCAL_CLAIM",
+      "ref": "claim:mock"
+    }
+  },
+  {
+    "version": "ZC04_TELEMETRY_MOCK_V1",
+    "repository": "augusliang23-web/cc-h15a-claude-dispatch-lab",
+    "task_id": "ZC-04-TELEMETRY-MOCK-01",
+    "sequence": 3,
+    "at": "2026-10-31T07:00:03.000Z",
+    "actor": "antigravity",
+    "source": "mac-relay",
+    "type": "RUNNING",
+    "proof": {
+      "kind": "PROCESS",
+      "ref": "process:mock"
+    }
+  },
+  {
+    "version": "ZC04_TELEMETRY_MOCK_V1",
+    "repository": "augusliang23-web/cc-h15a-claude-dispatch-lab",
+    "task_id": "ZC-04-TELEMETRY-MOCK-01",
+    "sequence": 4,
+    "at": "2026-10-31T07:00:10.000Z",
+    "actor": "antigravity",
+    "source": "mac-relay",
+    "type": "HEARTBEAT",
+    "proof": {
+      "kind": "PROCESS",
+      "ref": "process:mock"
+    }
+  }
+]
