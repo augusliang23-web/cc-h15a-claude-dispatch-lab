@@ -107,7 +107,7 @@ test('C14 P1: missing deny is HOLD without executing any provider',()=>withHome(
  const config=path.join(home,'.gemini','antigravity-cli','settings.json');
  fs.writeFileSync(config,'{}',{mode:0o600});
  let count=0;
- const output=runSingle({platform:'darwin',home,env,spawn:()=>{count++;return fake();}});
+ const output=await runSingle({platform:'darwin',home,env,spawn:()=>{count++;return fake();}});
  assert.equal(output.reason,'EFFECTIVE_DENY_POLICY_NOT_CONFIGURED');
  assert.equal(count,0);
 }));
