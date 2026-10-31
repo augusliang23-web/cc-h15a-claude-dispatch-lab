@@ -46,6 +46,7 @@ function reserveOne(io,home){
       canonical=target;
     }else{
       if(!st.isDirectory()||
+         (own!==undefined&&st.uid!==0&&st.uid!==own)||
          ((st.mode&0o022)!==0&&!(st.uid===0&&(st.mode&0o1000)!==0)))
         throw Error('UNSAFE_HOME_ANCESTOR');
       canonical=next;
