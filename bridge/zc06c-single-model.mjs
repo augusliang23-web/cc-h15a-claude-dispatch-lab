@@ -30,11 +30,31 @@ function dirSync(io,dir){
 function reserveOne(io,home){
   if(typeof home!=='string'||!path.isAbsolute(home))throw Error('INVALID_HOME');
   const own=process.getuid?.();
-  const canonical=io.realpathSync(home);
-  if(!io.lstatSync(canonical).isDirectory()||io.lstatSync(canonical).isSymbolicLink()||
-     (io.lstatSync(canonical).mode&0o022)!==0||
-     (own!==undefined&&io.lstatSync(canonical).uid!==own))
-    throw Error('UNSAFE_HOME');
+  // Check all path components *before* following aliases. Never trust a
+  // user-controlled symlink ancestor, even when its target is currently safe.
+  let canonical=path.parse(home).root;
+  for(const component of home.slice(canonical.length).split(path.sep)){
+    if(!component||component==='.'||component==='..')
+      throw Error('UNSAFE_HOME_COMPONENT');
+    const next=path.join(canonical,component),st=io.lstatSync(next);
+    if(st.isSymbolicLink()){
+      const target=io.realpathSync(next);
+      const systemAlias=process.platform==='darwin'&&st.uid===0&&
+        ((next==='/var'&&target==='/private/var')||
+         (next==='/tmp'&&target==='/private/tmp'));
+      if(!systemAlias)throw Error('UNSAFE_HOME_SYMLINK');
+      canonical=target;
+    }else{
+      if(!st.isDirectory()||
+         ((st.mode&0o022)!==0&&!(st.uid===0&&(st.mode&0o1000)!==0)))
+        throw Error('UNSAFE_HOME_ANCESTOR');
+      canonical=next;
+    }
+  }
+  const homeSt=io.lstatSync(canonical);
+  if(!homeSt.isDirectory()||homeSt.isSymbolicLink()||
+     (homeSt.mode&0o022)!==0||
+     (own!==undefined&&homeSt.uid!==own))throw Error('UNSAFE_HOME');
   let parent=canonical;
   for(const name of ['.local','state',CONTRACT.claimDir]){
     const next=path.join(parent,name);
