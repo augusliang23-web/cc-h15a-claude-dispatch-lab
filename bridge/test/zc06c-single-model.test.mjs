@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {CONTRACT,ARGS,safeEnvironment,evaluate,runSingle,REQUIRED_DENY,inspectDenyPolicy} from '../zc06c-single-model.mjs';
-const withHome=fn=>{
+import {EventEmitter} from 'node:events';
+import {CONTRACT,ARGS,safeEnvironment,evaluate,runSingle,supervisedRun,REQUIRED_DENY,inspectDenyPolicy} from '../zc06c-single-model.mjs';
+const withHome=async fn=>{
  const h=fs.mkdtempSync(path.join(os.tmpdir(),'zc06c-test-'));
  fs.chmodSync(h,0o700);
  try{
@@ -16,7 +17,7 @@ const withHome=fn=>{
    fs.writeFileSync(path.join(settings,'settings.json'),
       JSON.stringify({toolPermission:'request-review',
         permissions:{deny:[...REQUIRED_DENY]}}),{mode:0o600});
-   return fn(h);
+   return await fn(h);
  }finally{fs.rmSync(h,{recursive:true,force:true});}
 };
 const env={ZC06C_OVERAGES_OFF_CONFIRMED:'YES',PATH:process.env.PATH||'/usr/bin:/bin'};
@@ -46,36 +47,36 @@ test('C03 mismatch/nonzero/non-json/timeouts fail closed',()=>{
 test('C04 workspace changes reject successful model content',()=>{
  assert.equal(evaluate(fake(),false).reason,'WORKSPACE_CHANGED');
 });
-test('C05 no actual model process without overages reconfirmation',()=>withHome(home=>{
+test('C05 no actual model process without overages reconfirmation',()=>withHome(async home=>{
  let n=0;
- const r=runSingle({platform:'darwin',home,env:{},spawn:()=>{n++;return fake();}});
+ const r=await runSingle({platform:'darwin',home,env:{},spawn:()=>{n++;return fake();}});
  assert.equal(r.reason,'OVERAGES_OFF_NOT_RECONFIRMED');assert.equal(n,0);
 }));
 test('C06 alternate API environment blocks model invocation',()=>withHome(home=>{
  let count=0;
- const r=runSingle({platform:'darwin',home,
+ const r=await runSingle({platform:'darwin',home,
  env:{...env,GEMINI_API_KEY:'present'},spawn:()=>{count++;return fake();}});
  assert.equal(r.reason,'ALTERNATE_PROVIDER_ENV_DETECTED');assert.equal(count,0);
 }));
 test('C07 one local claim allows only ONE injected model process',()=>withHome(home=>{
  let count=0;const spawn=()=>{count++;return fake();};
- const first=runSingle({platform:'darwin',home,env,spawn});
+ const first=await runSingle({platform:'darwin',home,env,spawn});
  assert.equal(first.gate,'ZC06C_SINGLE_RESPONSE_OBSERVED');
- const second=runSingle({platform:'darwin',home,env,spawn});
+ const second=await runSingle({platform:'darwin',home,env,spawn});
  assert.equal(second.reason,'ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');
  assert.equal(count,1);
 }));
 test('C08 failed provider response is never retried',()=>withHome(home=>{
  let count=0;const spawn=()=>{count++;return {...fake(),status:1};};
- assert.equal(runSingle({platform:'darwin',home,env,spawn}).gate,'ZC06C_HOLD');
- assert.equal(runSingle({platform:'darwin',home,env,spawn}).gate,'ZC06C_HOLD');
+ assert.equal((await runSingle({platform:'darwin',home,env,spawn})).gate,'ZC06C_HOLD');
+ assert.equal((await runSingle({platform:'darwin',home,env,spawn})).gate,'ZC06C_HOLD');
  assert.equal(count,1);
 }));
 test('C09 symlinked CLI binary rejected',()=>withHome(home=>{
  const file=path.join(home,'.local','bin','agy');
  fs.unlinkSync(file);fs.symlinkSync('/bin/echo',file);
  let called=false;const spawn=()=>{called=true;return fake();};
- assert.equal(runSingle({platform:'darwin',home,env,spawn}).reason,'CLI_NOT_REGULAR_EXECUTABLE');
+ assert.equal((await runSingle({platform:'darwin',home,env,spawn})).reason,'CLI_NOT_REGULAR_EXECUTABLE');
  assert.equal(called,false);
 }));
 test('C10 environment allowlist does not expose keys or GitHub credentials',()=>{
@@ -85,9 +86,9 @@ test('C10 environment allowlist does not expose keys or GitHub credentials',()=>
  assert.equal(e.GITHUB_TOKEN,undefined);
  assert.equal(e.GEMINI_API_KEY,undefined);
 });
-test('C11 Linux CI cannot initiate provider process',()=>{
+test('C11 Linux CI cannot initiate provider process',async()=>{
  let count=0;
- assert.equal(runSingle({platform:'linux',spawn:()=>{count++;}}).reason,'MAC_ONLY');
+ assert.equal((await runSingle({platform:'linux',spawn:()=>{count++;}})).reason,'MAC_ONLY');
  assert.equal(count,0);
 });
 test('C12 CLI direct entry without --once never calls provider',()=>{
@@ -131,7 +132,7 @@ test('C16 P2: provider-reported arbitrary model text is not emitted',()=>{
 test('C17 P2: world-writable HOME cannot be used as Claim parent',()=>withHome(home=>{
  fs.chmodSync(home,0o777);
  let calls=0;
- const r=runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
+ const r=await runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
  assert.equal(r.gate,'ZC06C_HOLD');
  assert.equal(r.reason,'ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');
  assert.equal(calls,0);
@@ -144,3 +145,82 @@ test('C18 policy rejects unsafe billing provider config',()=>withHome(home=>{
  }));
  assert.equal(inspectDenyPolicy({home}),false);
 }));
+
+function fakeProcess(p=700001){
+ const child=new EventEmitter();
+ child.pid=p;
+ child.stdout=new EventEmitter();
+ child.stderr=new EventEmitter();
+ return child;
+}
+test('C19 supervisor clean close with group exit confirms process exit',async()=>{
+ const child=fakeProcess();
+ const launch=()=>{
+  setImmediate(()=>{
+   child.stdout.emit('data',Buffer.from(JSON.stringify({
+    status:'SUCCESS',response:CONTRACT.answer})));
+   child.emit('close',0,null);
+  });
+  return child;
+ };
+ const sendSignal=()=>{const e=new Error('no group');e.code='ESRCH';throw e;};
+ const r=await supervisedRun({binary:'/not/used',args:[],cwd:'/tmp',
+   env:{},launch,sendSignal,timeoutMs:250});
+ assert.equal(r.error,null);
+ assert.equal(r.groupExitObserved,true);
+ assert.equal(r.exitObserved,true);
+ assert.equal(r.status,0);
+});
+test('C20 timeout triggers process-group termination and never reports success',async()=>{
+ const child=fakeProcess(700002);
+ let terminated=false,signalled=[];
+ const launch=()=>child;
+ const sendSignal=(pid,signal)=>{
+  if(signal===0){
+   if(terminated){const e=new Error('gone');e.code='ESRCH';throw e;}
+   return;
+  }
+  signalled.push(signal);
+  terminated=true;
+  setImmediate(()=>child.emit('close',null,'SIGTERM'));
+ };
+ const r=await supervisedRun({binary:'/not/used',args:[],cwd:'/tmp',
+  env:{},launch,sendSignal,timeoutMs:15});
+ assert.equal(r.error,'TIMEOUT');
+ assert.ok(signalled.includes('SIGTERM'));
+ assert.equal(r.groupExitObserved,true);
+ assert.equal(evaluate(r,true).gate,'ZC06C_HOLD');
+});
+test('C21 a surviving process group is not a validated clean exit',async()=>{
+ const child=fakeProcess(700003);
+ const launch=()=>{
+  setImmediate(()=>child.emit('close',0,null));
+  return child;
+ };
+ const signals=[];
+ const sendSignal=(pid,sig)=>{if(sig!==0)signals.push(sig);};
+ const r=await supervisedRun({binary:'/not/used',args:[],cwd:'/tmp',
+  env:{},launch,sendSignal,timeoutMs:500});
+ assert.equal(r.groupExitObserved,false);
+ assert.ok(signals.includes('SIGKILL'));
+ assert.equal(evaluate(r,true).gate,'ZC06C_HOLD');
+});
+test('C22 oversized CLI output is stopped and HOLD',async()=>{
+ const child=fakeProcess(700004);
+ let gone=false;
+ const launch=()=>{
+  setImmediate(()=>{
+   child.stdout.emit('data',Buffer.alloc(32769,0x78));
+   child.emit('close',null,'SIGKILL');
+  });
+  return child;
+ };
+ const sendSignal=(pid,sig)=>{
+  if(sig===0){if(gone){const e=new Error('gone');e.code='ESRCH';throw e;}return;}
+  if(sig==='SIGKILL')gone=true;
+ };
+ const r=await supervisedRun({binary:'/not/used',args:[],cwd:'/tmp',
+  env:{},launch,sendSignal,timeoutMs:500});
+ assert.equal(r.error,'OUTPUT_LIMIT');
+ assert.equal(evaluate(r,true).gate,'ZC06C_HOLD');
+});
