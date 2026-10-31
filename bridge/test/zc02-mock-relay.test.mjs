@@ -349,15 +349,20 @@ test('Z17 interrupted nested mkdir reconfirms existing parent entries on retry',
     assert.equal(failed.reason,'LOCAL_STATE_UNSAFE_OR_UNAVAILABLE');
     assert.equal(fs.existsSync(path.join(root,'nested')),true);
     // A second attempt may proceed ONLY after the parent entry is re-synced.
-    const verifiedDirs=[];
-    // Count directory fsyncs without relying on OS-specific fd paths.
+    const failedParent = fs.statSync(root);
+    let confirmedFailedParentBeforeClaim = false;
     const r=executeMock({issue:makeIssue(),stateDir:state,io:{
       ...fs,fsyncSync(fd){
-        if (fs.fstatSync(fd).isDirectory()) verifiedDirs.push('DIR_SYNCED');
+        const st=fs.fstatSync(fd);
+        if (st.isDirectory() &&
+            st.dev===failedParent.dev && st.ino===failedParent.ino &&
+            !fs.existsSync(path.join(state, EXPECTED.task_id+'.claim.json')))
+          confirmedFailedParentBeforeClaim = true;
         syncOriginal(fd);
       },
     }});
     assert.equal(r.status,'MOCK_COMPLETED_LOCAL_ONLY');
-    assert.ok(verifiedDirs.length>=3);
+    assert.equal(confirmedFailedParentBeforeClaim,true,
+      'previously failed parent inode must be synced BEFORE claim creation');
     assert.equal(executeMock({issue:makeIssue(),stateDir:state}).status,'HOLD');
   }));
