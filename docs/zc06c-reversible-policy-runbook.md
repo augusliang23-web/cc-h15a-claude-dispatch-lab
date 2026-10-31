@@ -15,7 +15,7 @@
 2. Owner confirms on Mac at invocation time: Google AI Pro plan, AI Credit Overages **OFF**, no Gemini API key mode; CLI version and exact model slug unchanged. No credential or account-identifying output.
 3. Read-only process inventory shows no other active `agy` CLI session or unidentified Antigravity process that could use these CLI global settings. Do not kill or auto-dismiss other applications. If concurrency cannot be ruled out, STOP.
 4. Verify all ancestors of HOME, `.gemini/antigravity-cli`, `.local/bin/agy` and intended Claim directory: trusted root/owner, safe write bits, no untrusted symlinks. Verify actual macOS behavior on the real machine before provider invocation.
-5. Read original JSON only into process memory, never into GitHub / console / chat. Capture exact SHA-256, mode, owner and inode, and current relative change generation. Deny if malformed, >128 KiB, invalid permission schema, nondefault provider, `useG1Credits=true`, `allowNonWorkspaceAccess=true` or changed baseline.
+5. Read original **raw bytes** only into process memory, never into GitHub / console / chat. Reject invalid UTF-8 without lossy decoding. Capture SHA-256 of the original bytes, mode, owner and inode, and current relative change generation. Restoration MUST compare raw bytes, not decoded strings or normalized JSON. Deny if malformed, >128 KiB, invalid permission schema, nondefault provider, `useG1Credits=true`, `allowNonWorkspaceAccess=true` or changed baseline.
 
 ## Off-line plan and transaction state machine (no implementation of writes is authorized yet)
 
