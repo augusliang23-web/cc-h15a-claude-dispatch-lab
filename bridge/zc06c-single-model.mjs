@@ -32,6 +32,7 @@ function reserveOne(io,home){
   const own=process.getuid?.();
   const canonical=io.realpathSync(home);
   if(!io.lstatSync(canonical).isDirectory()||io.lstatSync(canonical).isSymbolicLink()||
+     (io.lstatSync(canonical).mode&0o022)!==0||
      (own!==undefined&&io.lstatSync(canonical).uid!==own))
     throw Error('UNSAFE_HOME');
   let parent=canonical;
