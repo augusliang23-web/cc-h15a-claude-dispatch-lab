@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {C,eventAt,bodyFor,preflight,checkAck,ghArguments,runOnce} from '../zc04b-one-shot-mac.mjs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {C,eventAt,bodyFor,preflight,checkAck,ghArguments,runOnce,isDirectInvocation} from '../zc04b-one-shot-mac.mjs';
 const now=new Date('2026-10-31T09:00:00.000Z'),nonce='a'.repeat(32);
 const R='repos/'+C.repo;
 const issue=()=>({number:30,state:'open',title:C.title,body:C.challenge+' '+C.main});
@@ -112,4 +114,24 @@ test('B4-11 all live gh arguments are pinned to github.com and Issue #30',()=>{
  assert.throws(()=>ghArguments('POST',R+'/issues/31/comments',{body:C.marker}));
  assert.throws(()=>ghArguments('POST','repos/other/repo/issues/30/comments',{body:C.marker}));
  assert.throws(()=>ghArguments('PATCH',R+'/issues/30/comments',{body:C.marker}));
+});
+
+test('B4-12 direct CLI with aliased ancestor never exits silently',()=>isolated(home=>{
+ const original=fileURLToPath(new URL('../zc04b-one-shot-mac.mjs',import.meta.url));
+ const alias=path.join(home,'source-alias');
+ fs.symlinkSync(path.dirname(original),alias,'dir');
+ const aliasedEntry=path.join(alias,path.basename(original));
+ assert.equal(isDirectInvocation(aliasedEntry,new URL('../zc04b-one-shot-mac.mjs',import.meta.url)),true);
+ const res=spawnSync(process.execPath,[aliasedEntry,'--invalid'],{
+   encoding:'utf8',timeout:5000,env:process.env
+ });
+ assert.equal(res.error,undefined);
+ assert.equal(res.status,2,JSON.stringify({stdout:res.stdout,stderr:res.stderr}));
+ assert.match(res.stdout,/"reason":"ONLY_EXPLICIT_ONCE_SUPPORTED"/);
+ assert.match(res.stdout,/"status":"HOLD"/);
+}));
+test('B4-13 executable CLI guard rejects missing and unrelated entrypoints',()=>{
+ const url=new URL('../zc04b-one-shot-mac.mjs',import.meta.url);
+ assert.equal(isDirectInvocation(undefined,url),false);
+ assert.equal(isDirectInvocation(path.join(os.tmpdir(),'non-existent-probe-script'),url),false);
 });

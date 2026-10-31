@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath} from 'node:url';
 export const C=Object.freeze({
   repo:'augusliang23-web/cc-h15a-claude-dispatch-lab',
   issue:30,task:'ZC04B-MAC-ONESHOT-20261031-A1',
@@ -150,7 +150,16 @@ export function runOnce({platform=process.platform,home=os.homedir(),
       '#issuecomment-'+posted.id,created_at:read.created_at,
     agent_invoked:false,model_invoked:false,agent_health_verified:false};
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
+// macOS resolves /var to /private/var; comparing URL strings would silently
+// skip the CLI entrypoint when invoked through the /var/folders temp alias.
+export function isDirectInvocation(entry,moduleUrl,io=fs){
+  if(typeof entry!=='string'||entry.length===0)return false;
+  try {
+    return io.realpathSync(path.resolve(entry))===
+      io.realpathSync(fileURLToPath(moduleUrl));
+  } catch {return false;}
+}
+if(isDirectInvocation(process.argv[1],import.meta.url)){
   const answer=process.argv.length===3&&process.argv[2]==='--once'?
     runOnce():hold('ONLY_EXPLICIT_ONCE_SUPPORTED');
   process.stdout.write(JSON.stringify(answer)+'\n');
