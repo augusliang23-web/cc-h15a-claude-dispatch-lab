@@ -94,6 +94,16 @@ export const REQUIRED_DENY=Object.freeze([
 // AgY build enforces the rules; execution remains subject to residual risk.
 export function inspectDenyPolicy({home=os.homedir(),io=fs}={}) {
  try {
+  // The Deny list is not a security boundary if an ancestor can be retargeted.
+  // No symlink or group/world-writable settings directory is permitted.
+  const own=process.getuid?.();
+  for(const dir of [home,path.join(home,'.gemini'),
+                    path.join(home,'.gemini','antigravity-cli')]){
+   const ancestor=io.lstatSync(dir);
+   if(!ancestor.isDirectory()||ancestor.isSymbolicLink()||
+      (ancestor.mode&0o022)!==0||
+      (own!==undefined&&ancestor.uid!==own))return false;
+  }
   const filename=path.join(home,'.gemini','antigravity-cli','settings.json');
   const st=io.lstatSync(filename);
   if(!st.isFile()||st.isSymbolicLink()||
