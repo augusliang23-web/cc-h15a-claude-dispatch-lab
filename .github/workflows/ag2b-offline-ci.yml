@@ -24,7 +24,8 @@ jobs:
       ((github.event.pull_request.number == 11 && github.head_ref == 'codex/ag2b2-secure-claim-recovery') ||
        github.head_ref == 'codex/ag2b3a1-github-readonly-preflight' ||
        (github.event.pull_request.number == 15 && github.head_ref == 'codex/ag2b3a2a-trust-claim-preflight') ||
-       (github.event.pull_request.number == 19 && github.head_ref == 'codex/m2a-agy-adapter-offline-contract')) &&
+       (github.event.pull_request.number == 19 && github.head_ref == 'codex/m2a-agy-adapter-offline-contract') ||
+       github.head_ref == 'zc/zc02-mock-mac-relay') &&
       github.event.pull_request.draft == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
