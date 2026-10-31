@@ -67,7 +67,9 @@ function reserveOne(io,home){
       st=io.lstatSync(next);
     }
     if(!st.isDirectory()||st.isSymbolicLink()||
-       (st.mode&0o077)!==0||(own!==undefined&&st.uid!==own))
+       (st.mode&0o022)!==0||
+       (name===CONTRACT.claimDir&&(st.mode&0o077)!==0)||
+       (own!==undefined&&st.uid!==own))
       throw Error('UNSAFE_CLAIM_PATH');
     parent=next;
   }
