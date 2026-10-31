@@ -53,7 +53,7 @@ test('P04 non-default billing provider cannot be silently changed',()=>{
   {toolPermission:'always-proceed'},
   {toolPermission:'proceed-in-sandbox'},
  ]){
-  assert.equal(planRestrictedPolicy(Buffer.from(JSON.stringify(data)).gate,'ZC06C_PLAN_HOLD');
+  assert.equal(planRestrictedPolicy(Buffer.from(JSON.stringify(data))).gate,'ZC06C_PLAN_HOLD');
  }
 });
 test('P05 invalid config and permission arrays never produce a usable plan',()=>{
