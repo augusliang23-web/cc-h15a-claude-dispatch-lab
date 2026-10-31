@@ -221,3 +221,78 @@ test('Z10 offline symlinked CLI first and repeated invocation: receipt then HOLD
       EXPECTED.task_id + '.receipt.json'), 'utf8')), firstData);
     assert.equal(fs.readFileSync(calls, 'utf8'), 'GET\nGET\n');
   }));
+
+
+test('Z11 ancestor symlink is rejected before creating a second claim tree', () =>
+  withDir(root => {
+    const dir1 = path.join(root, 'tree-one');
+    const dir2 = path.join(root, 'tree-two');
+    fs.mkdirSync(dir1, {mode: 0o700});
+    fs.mkdirSync(dir2, {mode: 0o700});
+    const alias = path.join(root, 'alias');
+    fs.symlinkSync(dir1, alias, 'dir');
+    const target = path.join(alias, 'state');
+    const result = executeMock({issue:makeIssue(),stateDir:target});
+    assert.equal(result.status, 'HOLD');
+    assert.equal(result.reason, 'LOCAL_STATE_UNSAFE_OR_UNAVAILABLE');
+    assert.deepEqual(fs.readdirSync(dir1), []);
+    assert.deepEqual(fs.readdirSync(dir2), []);
+    fs.unlinkSync(alias);
+    fs.symlinkSync(dir2, alias, 'dir');
+    assert.equal(executeMock({issue:makeIssue(),stateDir:target}).status, 'HOLD');
+    assert.deepEqual(fs.readdirSync(dir2), []);
+  }));
+
+test('Z12 private nested directory creation and duplicate HOLD with durable receipt', () =>
+  withDir(root => {
+    const state = path.join(root,'new','nested','state');
+    const first = executeMock({issue:makeIssue(),stateDir:state});
+    assert.equal(first.status, 'MOCK_COMPLETED_LOCAL_ONLY');
+    assert.equal(fs.statSync(state).mode & 0o077, 0);
+    assert.deepEqual(fs.readdirSync(state).sort(), [
+      EXPECTED.task_id + '.claim.json', EXPECTED.task_id + '.receipt.json',
+    ]);
+    const again = executeMock({issue:makeIssue(),stateDir:state});
+    assert.equal(again.status,'HOLD');
+    assert.equal(again.reason,'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
+  }));
+
+test('Z13 a claim-directory fsync failure fails closed, keeps claim, no receipt', () =>
+  withDir(root => {
+    const state = path.join(root,'state');
+    fs.mkdirSync(state,{mode:0o700});
+    const syncOriginal = fs.fsyncSync.bind(fs);
+    let failNext = true;
+    const io = {...fs, fsyncSync(fd) {
+      const st = fs.fstatSync(fd);
+      if (st.isDirectory() && failNext) {
+        failNext = false;
+        throw Error('INJECTED_DIR_SYNC_FAILURE');
+      }
+      syncOriginal(fd);
+    }};
+    const failed = executeMock({issue:makeIssue(),stateDir:state,io});
+    assert.equal(failed.status,'HOLD');
+    assert.equal(failed.reason,'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
+    assert.deepEqual(fs.readdirSync(state), [EXPECTED.task_id + '.claim.json']);
+    assert.equal(executeMock({issue:makeIssue(),stateDir:state}).reason,
+      'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
+  }));
+
+test('Z14 receipt fsync failure stays HOLD and cannot replay a claimed task', () =>
+  withDir(root => {
+    const state = path.join(root,'state');
+    fs.mkdirSync(state,{mode:0o700});
+    const syncOriginal=fs.fsyncSync.bind(fs);
+    const io={...fs,fsyncSync(fd){
+      const st=fs.fstatSync(fd);
+      if (st.isFile() && st.size>200 && st.size<1000)
+        throw Error('INJECTED_RECEIPT_SYNC_FAILURE');
+      syncOriginal(fd);
+    }};
+    const result=executeMock({issue:makeIssue(),stateDir:state,io});
+    assert.equal(result.status,'HOLD');
+    assert.equal(result.reason,'RECEIPT_WRITE_UNCERTAIN');
+    assert.equal(executeMock({issue:makeIssue(),stateDir:state}).reason,
+      'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
+  }));

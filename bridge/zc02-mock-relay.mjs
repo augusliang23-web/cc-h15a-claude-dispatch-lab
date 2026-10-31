@@ -67,21 +67,93 @@ export function fetchPinnedCanary({spawn = spawnSync} = {}) {
   catch { return {status: 'HOLD', reason: 'INVALID_GITHUB_JSON'}; }
 }
 
-function prepareStateDir(dir) {
-  if (typeof dir !== 'string' || !path.isAbsolute(dir) || !dir) throw Error('INVALID_STATE_DIR');
-  fs.mkdirSync(dir, {recursive: true, mode: 0o700});
-  const stat = fs.lstatSync(dir);
-  if (!stat.isDirectory() || stat.isSymbolicLink() ||
-      (typeof process.getuid === 'function' && stat.uid !== process.getuid()) ||
-      (stat.mode & 0o077) !== 0) throw Error('UNSAFE_STATE_DIR');
-  return dir;
+// Verify EVERY ancestor before creating state: attacker-owned ancestor symlinks
+// can redirect claims to independent trees and defeat create-once semantics.
+// Only macOS's root-owned /var -> /private/var OS alias is permitted.
+function safeDirectory(st, isLeaf = false) {
+  if (!st.isDirectory() || st.isSymbolicLink() ||
+      (typeof process.getuid === 'function' && st.uid !== 0 &&
+       st.uid !== process.getuid())) throw Error('UNSAFE_STATE_DIR');
+  if (isLeaf) {
+    if ((st.mode & 0o077) !== 0 ||
+        (typeof process.getuid === 'function' && st.uid !== process.getuid()))
+      throw Error('UNSAFE_STATE_DIR');
+  } else if ((st.mode & 0o022) !== 0 &&
+             !(st.uid === 0 && (st.mode & 0o1000) !== 0)) {
+    // Root-owned sticky directories such as /tmp allow private owned children.
+    throw Error('UNSAFE_STATE_ANCESTOR');
+  }
+}
+function syncDirectory(directory, io = fs) {
+  const fd = io.openSync(directory, 'r');
+  try { io.fsyncSync(fd); }
+  finally { io.closeSync(fd); }
+}
+function checkedPath(dir, {io = fs, create = false} = {}) {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir) ||
+      path.normalize(dir) !== dir || dir === path.parse(dir).root)
+    throw Error('INVALID_STATE_DIR');
+  let current = path.parse(dir).root;
+  const parts = dir.slice(current.length).split(path.sep);
+  const pending = [];
+  let missing = false;
+  let existingPrefix = current;
+  safeDirectory(io.lstatSync(current));
+  for (let i = 0; i < parts.length; i++) {
+    const next = path.join(current, parts[i]);
+    let st;
+    if (!missing) {
+      try { st = io.lstatSync(next); }
+      catch (e) { if (e.code !== 'ENOENT') throw e; missing = true; }
+    }
+    if (missing) {
+      pending.push(parts[i]);
+      // Keep existingPrefix stable until creation starts.
+      continue;
+    }
+    if (st.isSymbolicLink()) {
+      const canonical = io.realpathSync(next);
+      if (!(process.platform === 'darwin' && next === '/var' &&
+            canonical === '/private/var' && st.uid === 0))
+        throw Error('UNSAFE_STATE_ANCESTOR_SYMLINK');
+      // A trusted system alias still needs secure, root-owned target ancestry.
+      const rootPrivate = io.lstatSync('/private');
+      const target = io.lstatSync(canonical);
+      if (rootPrivate.uid !== 0 || target.uid !== 0) throw Error('UNSAFE_ALIAS_TARGET');
+      safeDirectory(rootPrivate);
+      safeDirectory(target);
+      current = canonical;
+      existingPrefix = canonical;
+    } else {
+      safeDirectory(st, i === parts.length - 1);
+      current = next;
+      existingPrefix = next;
+    }
+  }
+  if (pending.length && create) {
+    // The trusted existing prefix has been examined. Never create under a
+    // symlinked attacker-controlled ancestor; fsync every new parent entry.
+    let parent = existingPrefix;
+    for (const part of pending) {
+      parent = path.join(parent, part);
+      io.mkdirSync(parent, {mode: 0o700});
+      syncDirectory(path.dirname(parent), io);
+      safeDirectory(io.lstatSync(parent), true);
+    }
+    current = parent;
+  } else if (pending.length) throw Error('STATE_DIR_MISSING');
+  return current;
+}
+function prepareStateDir(dir, io = fs) {
+  // All operations after validation use resolved paths; no untrusted aliases.
+  return checkedPath(dir, {io, create: true});
 }
 
-export function executeMock({issue, stateDir} = {}) {
+export function executeMock({issue, stateDir, io = fs} = {}) {
   const check = verifyCanary(issue);
   if (check.status !== 'VALID_MOCK_CANARY') return check;
   let dir;
-  try { dir = prepareStateDir(stateDir); }
+  try { dir = prepareStateDir(stateDir, io); }
   catch { return hold('LOCAL_STATE_UNSAFE_OR_UNAVAILABLE'); }
   const claimFile = path.join(dir, `${id}.claim.json`);
   const receiptFile = path.join(dir, `${id}.receipt.json`);
@@ -91,12 +163,13 @@ export function executeMock({issue, stateDir} = {}) {
   // deliberately blocks future runs: there is NO retry/replay or automatic recovery.
   let fd;
   try {
-    fd = fs.openSync(claimFile, 'wx', 0o600);
-    fs.writeSync(fd, JSON.stringify(claim) + '\n');
-    fs.fsyncSync(fd);
-    fs.closeSync(fd); fd = undefined;
+    fd = io.openSync(claimFile, 'wx', 0o600);
+    io.writeSync(fd, JSON.stringify(claim) + '\n');
+    io.fsyncSync(fd);
+    io.closeSync(fd); fd = undefined;
+    syncDirectory(dir, io);
   } catch {
-    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+    if (fd !== undefined) { try { io.closeSync(fd); } catch {} }
     return hold('ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
   }
   const receipt = Object.freeze({
@@ -105,10 +178,17 @@ export function executeMock({issue, stateDir} = {}) {
     agent_invoked: false, model_invoked: false, github_writes: false,
     project_writes: false, execution_allowed: false, simulated: true,
   });
+  let receiptFd;
   try {
-    fs.writeFileSync(receiptFile, JSON.stringify(receipt, null, 2) + '\n',
-      {flag: 'wx', mode: 0o600});
-  } catch { return hold('RECEIPT_WRITE_UNCERTAIN'); }
+    receiptFd = io.openSync(receiptFile, 'wx', 0o600);
+    io.writeSync(receiptFd, JSON.stringify(receipt, null, 2) + '\n');
+    io.fsyncSync(receiptFd);
+    io.closeSync(receiptFd); receiptFd = undefined;
+    syncDirectory(dir, io);
+  } catch {
+    if (receiptFd !== undefined) { try { io.closeSync(receiptFd); } catch {} }
+    return hold('RECEIPT_WRITE_UNCERTAIN');
+  }
   return receipt;
 }
 

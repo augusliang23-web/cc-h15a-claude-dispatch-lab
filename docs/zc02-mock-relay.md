@@ -71,3 +71,11 @@ path smoke test. **Do not delete these files or re-run Issue #21's `--once` path
 to make this fix appear green. The hosted regression is intentionally offline.
 This patch alone does not authorize installation, automatic polling, model
 calls, real dispatch, branch merging or production changes.
+
+
+## Post-review safety hardening (Codex findings on PR #22)
+
+- Validate **every ancestor of the state path**, not just the leaf directory. An attacker-controlled ancestor symlink is rejected before any claim; allow only macOS's root-owned `/var -> /private/var` system alias. Store a resolved path for subsequent operations. Reject unknown/non-root-owned aliases and insecure/group-writable ancestors except root-owned sticky temporary directories.
+- Sync newly created directory entries and claim/receipt files before reporting `MOCK_COMPLETED_LOCAL_ONLY`. Any failure to sync returns HOLD and leaves an uncertain claim to prevent replay.
+- New Z11–Z14 offline tests cover ancestor symlink retarget, nested private directory creation, failed directory sync, and failed receipt sync. Existing owner state files are not reset.
+- These controls **reduce** local replay exposure but cannot prove atomic durable multi-machine dispatch, resistance against an attacker with the same Unix account who can mutate the filesystem concurrently, or hardware persistence guarantees. A live Agent must have separate trust and claim architecture and independent review. No live model path is enabled.
