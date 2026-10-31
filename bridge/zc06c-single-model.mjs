@@ -122,6 +122,23 @@ export function inspectDenyPolicy({home=os.homedir(),io=fs}={}) {
  }catch{return false;}
 }
 
+// A model-launch executable must not be replaceable by another local UID.
+export function inspectAgYExecutable({home=os.homedir(),io=fs}={}) {
+ try {
+  const own=process.getuid?.();
+  if(own===undefined)return false;
+  for(const dir of [home,path.join(home,'.local'),path.join(home,'.local','bin')]){
+   const st=io.lstatSync(dir);
+   if(!st.isDirectory()||st.isSymbolicLink()||
+      st.uid!==own||(st.mode&0o022)!==0)return false;
+  }
+  const binary=path.join(home,'.local','bin','agy');
+  const st=io.lstatSync(binary);
+  return st.isFile()&&!st.isSymbolicLink()&&st.uid===own&&
+    (st.mode&0o022)===0&&(st.mode&0o111)!==0;
+ }catch{return false;}
+}
+
 export function safeEnvironment({home=os.homedir(),tmp=os.tmpdir(),pathValue=process.env.PATH}={}){
   // Explicit allowlist: no cloud credentials, PATs, model-provider API keys,
   // shell startup overrides, or GitHub/SSH environment forwarded to AgY.
@@ -247,14 +264,13 @@ export async function runSingle({platform=process.platform,home=os.homedir(),io=
        'ANTHROPIC_API_KEY','OPENAI_API_KEY'].some(k=>Boolean(env[k])))
     return hold('ALTERNATE_PROVIDER_ENV_DETECTED');
   if(!inspectDenyPolicy({home,io}))return hold('EFFECTIVE_DENY_POLICY_NOT_CONFIGURED');
+  if(!inspectAgYExecutable({home,io}))
+    return hold('CLI_NOT_TRUSTED_EXECUTABLE');
   const binary=path.join(home,'.local','bin','agy');
-  try{
-    const st=io.lstatSync(binary);
-    if(!st.isFile()||st.isSymbolicLink()||!(st.mode&0o111))
-      return hold('CLI_NOT_REGULAR_EXECUTABLE');
-  }catch{return hold('CLI_UNAVAILABLE');}
   try{reserveOne(io,home);}
   catch{return hold('ONE_TIME_CLAIM_ALREADY_USED_OR_UNSAFE');}
+  if(!inspectAgYExecutable({home,io}))
+    return hold('CLI_EXECUTABLE_CHANGED_AFTER_CLAIM');
   let workspace;
   try{
     workspace=io.mkdtempSync(path.join(temp,'zc06c-empty-'));
