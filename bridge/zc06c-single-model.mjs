@@ -62,6 +62,33 @@ function reserveOne(io,home){
     dirSync(io,parent);
   }finally{if(fd!==undefined){try{io.closeSync(fd);}catch{}}}
 }
+
+export const REQUIRED_DENY=Object.freeze([
+ 'read_file(*)','write_file(*)','command(*)','unsandboxed(*)',
+ 'read_url(*)','execute_url(*)','mcp(*)'
+]);
+// This verifies the owner-owned policy file only. It cannot attest that an
+// AgY build enforces the rules; execution remains subject to residual risk.
+export function inspectDenyPolicy({home=os.homedir(),io=fs}={}) {
+ try {
+  const filename=path.join(home,'.gemini','antigravity-cli','settings.json');
+  const st=io.lstatSync(filename);
+  if(!st.isFile()||st.isSymbolicLink()||
+     (st.mode&0o022)!==0||
+     (typeof process.getuid==='function'&&st.uid!==process.getuid())||
+     st.size<2||st.size>131072)return false;
+  const value=JSON.parse(io.readFileSync(filename,'utf8'));
+  if(!value||typeof value!=='object'||Array.isArray(value))return false;
+  if(![undefined,'strict','request-review'].includes(value.toolPermission)||
+     value.allowNonWorkspaceAccess===true||value.useG1Credits===true||
+     ![undefined,''].includes(value.modelProvider))return false;
+  const deny=value.permissions?.deny;
+  if(!Array.isArray(deny)||!REQUIRED_DENY.every(rule=>deny.includes(rule)))return false;
+  // A separate explicit deny, rather than a prompt or cwd, is mandatory.
+  return true;
+ }catch{return false;}
+}
+
 export function safeEnvironment({home=os.homedir(),tmp=os.tmpdir(),pathValue=process.env.PATH}={}){
   // Explicit allowlist: no cloud credentials, PATs, model-provider API keys,
   // shell startup overrides, or GitHub/SSH environment forwarded to AgY.
@@ -104,6 +131,7 @@ export function runSingle({platform=process.platform,home=os.homedir(),io=fs,
   if(['GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_APPLICATION_CREDENTIALS',
        'ANTHROPIC_API_KEY','OPENAI_API_KEY'].some(k=>Boolean(env[k])))
     return hold('ALTERNATE_PROVIDER_ENV_DETECTED');
+  if(!inspectDenyPolicy({home,io}))return hold('EFFECTIVE_DENY_POLICY_NOT_CONFIGURED');
   const binary=path.join(home,'.local','bin','agy');
   try{
     const st=io.lstatSync(binary);
