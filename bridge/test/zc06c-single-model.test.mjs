@@ -224,3 +224,30 @@ test('C22 oversized CLI output is stopped and HOLD',async()=>{
  assert.equal(r.error,'OUTPUT_LIMIT');
  assert.equal(evaluate(r,true).gate,'ZC06C_HOLD');
 });
+
+test('C23 safe owner-readable parent directories do not block private claim',()=>withHome(async home=>{
+ fs.chmodSync(path.join(home,'.local'),0o755);
+ let calls=0;
+ const result=await runSingle({platform:'darwin',home,env,spawn:()=>{calls++;return fake();}});
+ assert.equal(result.gate,'ZC06C_SINGLE_RESPONSE_OBSERVED');
+ assert.equal(calls,1);
+}));
+test('C24 provider output permits one documented trailing LF only',()=>{
+ const good=evaluate({...fake(),stdout:JSON.stringify({
+  status:'SUCCESS',response:CONTRACT.answer+'\n'})},true);
+ assert.equal(good.gate,'ZC06C_SINGLE_RESPONSE_OBSERVED');
+ const bad=evaluate({...fake(),stdout:JSON.stringify({
+  status:'SUCCESS',response:CONTRACT.answer+'\n\n'})},true);
+ assert.equal(bad.gate,'ZC06C_HOLD');
+});
+test('C25 a symlink inside HOME ancestry blocks claim replay',()=>withHome(async home=>{
+ const parent=path.join(home,'target');
+ const link=path.join(home,'link');
+ fs.mkdirSync(parent,{mode:0o700});
+ fs.symlinkSync(parent,link);
+ let called=0;
+ const r=await runSingle({platform:'darwin',home:link,env,
+   spawn:()=>{called++;return fake();}});
+ assert.equal(r.gate,'ZC06C_HOLD');
+ assert.equal(called,0);
+}));
