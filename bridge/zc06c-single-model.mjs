@@ -80,14 +80,18 @@ export function evaluate(child,workspaceOk) {
   if(!value||typeof value!=='object'||Array.isArray(value)||
      value.status!=='SUCCESS'||typeof value.response!=='string')
     return {gate:'ZC06C_HOLD',reason:'CLI_NON_SUCCESS',...basic};
-  const exact=value.response.trim()===CONTRACT.answer;
+  const exact=value.response===CONTRACT.answer;
+  const reported=value.model===undefined?'NOT_REPORTED':
+    value.model===CONTRACT.model?'PINNED_MODEL':'UNRECOGNIZED';
+  const accepted=exact&&reported!=='UNRECOGNIZED';
   const usage=value.usage;
   const count=usage&&typeof usage==='object'&&
     Number.isSafeInteger(usage.total_tokens)&&usage.total_tokens>=0?
     usage.total_tokens:null;
-  return {gate:exact?'ZC06C_SINGLE_RESPONSE_OBSERVED':'ZC06C_HOLD',
-    reason:exact?'MATCHED_CHALLENGE':'RESPONSE_MISMATCH',
-    response_matched:exact,reported_model:typeof value.model==='string'?value.model:'NOT_REPORTED',
+  return {gate:accepted?'ZC06C_SINGLE_RESPONSE_OBSERVED':'ZC06C_HOLD',
+    reason:!exact?'RESPONSE_MISMATCH':
+      reported==='UNRECOGNIZED'?'MODEL_MISMATCH':'MATCHED_CHALLENGE',
+    response_matched:exact,reported_model:reported,
     usage_total_tokens:count,tool_use_verified_absent:false,
     ...basic};
 }
