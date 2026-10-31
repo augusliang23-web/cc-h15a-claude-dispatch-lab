@@ -79,3 +79,7 @@ calls, real dispatch, branch merging or production changes.
 - Sync newly created directory entries and claim/receipt files before reporting `MOCK_COMPLETED_LOCAL_ONLY`. Any failure to sync returns HOLD and leaves an uncertain claim to prevent replay.
 - New Z11–Z14 offline tests cover ancestor symlink retarget, nested private directory creation, failed directory sync, and failed receipt sync. Existing owner state files are not reset.
 - These controls **reduce** local replay exposure but cannot prove atomic durable multi-machine dispatch, resistance against an attacker with the same Unix account who can mutate the filesystem concurrently, or hardware persistence guarantees. A live Agent must have separate trust and claim architecture and independent review. No live model path is enabled.
+
+## Codex round-2 hardening
+
+A previous failed parent-directory sync can leave a directory created without durable parent-entry confirmation. Every subsequent invocation now re-synchronizes user-owned existing ancestor entries before it may acknowledge a new claim. Claim and receipt writes now require the full expected byte count before sync; a partial write yields HOLD without success. Tests Z15–Z17 inject truncated writes and interrupted nested directory creation. This remains MOCK-only and must still be separately validated on macOS. No automatic replay of Issue #21.

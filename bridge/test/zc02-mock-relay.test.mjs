@@ -297,3 +297,65 @@ test('Z14 receipt fsync failure stays HOLD and cannot replay a claimed task', ()
     assert.equal(executeMock({issue:makeIssue(),stateDir:state}).reason,
       'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
   }));
+
+
+test('Z15 short claim write fails closed without a completion receipt', () =>
+  withDir(root => {
+    const state=path.join(root,'state');fs.mkdirSync(state,{mode:0o700});
+    const original=fs.writeSync.bind(fs);
+    const io={...fs,writeSync(fd,buf,offset,length,position){
+      const n=Math.min(10,length);
+      return original(fd,buf,offset,n,position);
+    }};
+    const out=executeMock({issue:makeIssue(),stateDir:state,io});
+    assert.equal(out.status,'HOLD');
+    assert.equal(out.reason,'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
+    assert.deepEqual(fs.readdirSync(state),[EXPECTED.task_id+'.claim.json']);
+    assert.equal(executeMock({issue:makeIssue(),stateDir:state}).status,'HOLD');
+  }));
+
+test('Z16 short receipt write never reports success even if fsync succeeds', () =>
+  withDir(root => {
+    const state=path.join(root,'state');fs.mkdirSync(state,{mode:0o700});
+    const original=fs.writeSync.bind(fs);
+    let calls=0;
+    const io={...fs,writeSync(fd,buf,offset,length,position){
+      calls++;
+      return original(fd,buf,offset,calls===2?Math.min(10,length):length,position);
+    }};
+    const out=executeMock({issue:makeIssue(),stateDir:state,io});
+    assert.equal(out.status,'HOLD');
+    assert.equal(out.reason,'RECEIPT_WRITE_UNCERTAIN');
+    assert.equal(calls,2);
+    assert.equal(executeMock({issue:makeIssue(),stateDir:state}).reason,
+      'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN');
+  }));
+
+test('Z17 interrupted nested mkdir reconfirms existing parent entries on retry', () =>
+  withDir(root => {
+    const state=path.join(root,'nested','inner','state');
+    const syncOriginal=fs.fsyncSync.bind(fs);
+    let first=true;
+    const fault={...fs,fsyncSync(fd){
+      if (first && fs.fstatSync(fd).isDirectory()) {
+        first=false;throw Error('PARENT_FSYNC_FAILED');
+      }
+      syncOriginal(fd);
+    }};
+    const failed=executeMock({issue:makeIssue(),stateDir:state,io:fault});
+    assert.equal(failed.status,'HOLD');
+    assert.equal(failed.reason,'LOCAL_STATE_UNSAFE_OR_UNAVAILABLE');
+    assert.equal(fs.existsSync(path.join(root,'nested')),true);
+    // A second attempt may proceed ONLY after the parent entry is re-synced.
+    const verifiedDirs=[];
+    // Count directory fsyncs without relying on OS-specific fd paths.
+    const r=executeMock({issue:makeIssue(),stateDir:state,io:{
+      ...fs,fsyncSync(fd){
+        if (fs.fstatSync(fd).isDirectory()) verifiedDirs.push('DIR_SYNCED');
+        syncOriginal(fd);
+      },
+    }});
+    assert.equal(r.status,'MOCK_COMPLETED_LOCAL_ONLY');
+    assert.ok(verifiedDirs.length>=3);
+    assert.equal(executeMock({issue:makeIssue(),stateDir:state}).status,'HOLD');
+  }));

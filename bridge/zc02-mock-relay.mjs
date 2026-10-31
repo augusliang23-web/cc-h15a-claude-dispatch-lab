@@ -89,6 +89,12 @@ function syncDirectory(directory, io = fs) {
   try { io.fsyncSync(fd); }
   finally { io.closeSync(fd); }
 }
+function writeAllOrHold(fd, content, io = fs) {
+  // A short synchronous write is NOT success; it leaves an uncertain claim.
+  const data = Buffer.from(content, 'utf8');
+  const count = io.writeSync(fd, data, 0, data.length, 0);
+  if (!Number.isSafeInteger(count) || count !== data.length) throw Error('SHORT_WRITE');
+}
 function checkedPath(dir, {io = fs, create = false} = {}) {
   if (typeof dir !== 'string' || !path.isAbsolute(dir) ||
       path.normalize(dir) !== dir || dir === path.parse(dir).root)
@@ -126,6 +132,11 @@ function checkedPath(dir, {io = fs, create = false} = {}) {
       existingPrefix = canonical;
     } else {
       safeDirectory(st, i === parts.length - 1);
+      // A previous invocation may have created this private directory but
+      // failed syncing its parent's entry. Reconfirm on EVERY subsequent
+      // invocation before acknowledging a new claim in the subtree.
+      if (typeof process.getuid === 'function' && st.uid === process.getuid())
+        syncDirectory(current, io);
       current = next;
       existingPrefix = next;
     }
@@ -164,7 +175,7 @@ export function executeMock({issue, stateDir, io = fs} = {}) {
   let fd;
   try {
     fd = io.openSync(claimFile, 'wx', 0o600);
-    io.writeSync(fd, JSON.stringify(claim) + '\n');
+    writeAllOrHold(fd, JSON.stringify(claim) + '\n', io);
     io.fsyncSync(fd);
     io.closeSync(fd); fd = undefined;
     syncDirectory(dir, io);
@@ -181,7 +192,7 @@ export function executeMock({issue, stateDir, io = fs} = {}) {
   let receiptFd;
   try {
     receiptFd = io.openSync(receiptFile, 'wx', 0o600);
-    io.writeSync(receiptFd, JSON.stringify(receipt, null, 2) + '\n');
+    writeAllOrHold(receiptFd, JSON.stringify(receipt, null, 2) + '\n', io);
     io.fsyncSync(receiptFd);
     io.closeSync(receiptFd); receiptFd = undefined;
     syncDirectory(dir, io);
