@@ -42,8 +42,36 @@ function syncDir(dir,io) {
   const fd=io.openSync(dir,'r');
   try{io.fsyncSync(fd)}finally{io.closeSync(fd)}
 }
+// Inspect each raw path component BEFORE canonicalization. macOS system
+// /var and /tmp root-owned aliases are the only accepted symlink ancestors.
+function checkedHome(home,io) {
+  if(typeof home!=='string'||!path.isAbsolute(home)||
+     path.normalize(home)!==home||home===path.parse(home).root)
+    throw Error('INVALID_HOME');
+  let current=path.parse(home).root;
+  const components=home.slice(current.length).split(path.sep);
+  for(const segment of components){
+    const next=path.join(current,segment),st=io.lstatSync(next);
+    if(st.isSymbolicLink()){
+      const canonical=io.realpathSync(next);
+      const alias=(next==='/var'&&canonical==='/private/var')||
+                  (next==='/tmp'&&canonical==='/private/tmp');
+      if(process.platform!=='darwin'||!alias||st.uid!==0)
+        throw Error('UNTRUSTED_HOME_SYMLINK');
+      const privateDir=io.lstatSync('/private'),target=io.lstatSync(canonical);
+      if(!privateDir.isDirectory()||privateDir.uid!==0||
+         !target.isDirectory()||target.uid!==0)
+        throw Error('UNSAFE_SYSTEM_ALIAS');
+      current=canonical;
+    } else {
+      if(!st.isDirectory())throw Error('NON_DIRECTORY_ANCESTOR');
+      current=next;
+    }
+  }
+  return current;
+}
 function reserve(home,e,io) {
-  const base=io.realpathSync(home),uid=process.getuid?.();
+  const base=checkedHome(home,io),uid=process.getuid?.();
   const own=io.lstatSync(base);
   if(!own.isDirectory()||own.isSymbolicLink()||
     (uid!==undefined&&own.uid!==uid)||(own.mode&0o022)!==0)throw Error('UNSAFE_HOME');
@@ -74,9 +102,23 @@ function reserve(home,e,io) {
     io.fsyncSync(fd);io.closeSync(fd);fd=undefined;syncDir(dir,io);
   }finally{if(fd!==undefined){try{io.closeSync(fd)}catch{}}}
 }
-function liveGh(method,route,data) {
-  const args=['api','-X',method,route];
+export function ghArguments(method,route,data) {
+  const allowedGet=new Set([
+    R+'/issues/'+C.issue,R+'/git/ref/heads/main','user',
+    R+'/issues/'+C.issue+'/comments?per_page=100',
+  ]);
+  const receiptGet=route.startsWith(R+'/issues/comments/') &&
+    /^[1-9][0-9]*$/.test(route.slice((R+'/issues/comments/').length));
+  const allowedPost=method==='POST'&&route===R+'/issues/'+C.issue+'/comments'&&
+    data&&typeof data.body==='string'&&data.body.startsWith(C.marker);
+  if(!((method==='GET'&&data===undefined&&(allowedGet.has(route)||receiptGet))||
+        allowedPost))throw Error('UNAUTHORIZED_GITHUB_ROUTE');
+  const args=['api','--hostname','github.com','-X',method,route];
   if(data!==undefined)args.push('--input','-');
+  return args;
+}
+function liveGh(method,route,data) {
+  const args=ghArguments(method,route,data);
   return JSON.parse(execFileSync('gh',args,{encoding:'utf8',timeout:20000,
     maxBuffer:1048576,stdio:['pipe','pipe','pipe'],
     ...(data===undefined?{}:{input:JSON.stringify(data)})}));

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {C,eventAt,bodyFor,preflight,checkAck,runOnce} from '../zc04b-one-shot-mac.mjs';
+import {C,eventAt,bodyFor,preflight,checkAck,ghArguments,runOnce} from '../zc04b-one-shot-mac.mjs';
 const now=new Date('2026-10-31T09:00:00.000Z'),nonce='a'.repeat(32);
 const R='repos/'+C.repo;
 const issue=()=>({number:30,state:'open',title:C.title,body:C.challenge+' '+C.main});
@@ -12,7 +12,10 @@ function fake(overrides={}){
  function gh(method,route,data){
   calls.push(method);
   if(method==='POST'){
-    posts.push(data);
+    if(route!==R+'/issues/30/comments')throw Error('WRONG_POST_DESTINATION');
+    if(typeof data?.body!=='string'||!data.body.startsWith(C.marker))
+      throw Error('WRONG_POST_PAYLOAD');
+    posts.push({route,data});
     if(overrides.fail)throw Error('FAKE_NETWORK');
     receipt={id:98765432,body:data.body,user:{login:C.actor},
       created_at:'2026-10-31T09:00:01Z'};
@@ -45,6 +48,8 @@ test('B4-02 one fake POST and server readback',()=>isolated(home=>{
  assert.equal(out.status,'MAC_TO_GITHUB_PROBE_VERIFIED');
  assert.deepEqual(a.calls,['GET','GET','GET','GET','POST','GET']);
  assert.equal(a.posts.length,1);
+ assert.equal(a.posts[0].route,R+'/issues/30/comments');
+ assert.equal(a.posts[0].data.body.includes(C.challenge),true);
 }));
 test('B4-03 claim forbids second post, even if server comments are absent',()=>isolated(home=>{
  const a=fake();assert.equal(run(home,a).status,'MAC_TO_GITHUB_PROBE_VERIFIED');
@@ -84,4 +89,27 @@ test('B4-09 exact schema/actor/Issue/ACK checks',()=>{
  assert.equal(checkAck({...good,user:{login:'fake'}},body),false);
  assert.equal(preflight({issue:issue(),main:{object:{sha:C.main}},
  user:{login:C.actor},comments:[]}),true);
+});
+
+test('B4-10 symlinked HOME ancestor never permits a write',()=>isolated(root=>{
+ const a=path.join(root,'A'),b=path.join(root,'B');
+ fs.mkdirSync(a,{mode:0o700});fs.mkdirSync(b,{mode:0o700});
+ const alias=path.join(root,'HOME_ALIAS');fs.symlinkSync(a,alias);
+ const one=fake();
+ assert.equal(run(alias,one).status,'HOLD');
+ assert.equal(one.posts.length,0);
+ fs.unlinkSync(alias);fs.symlinkSync(b,alias);
+ const two=fake();
+ assert.equal(run(alias,two).status,'HOLD');
+ assert.equal(two.posts.length,0);
+}));
+test('B4-11 all live gh arguments are pinned to github.com and Issue #30',()=>{
+ for(const method of ['GET','POST']){
+  const route=method==='POST'?R+'/issues/30/comments':'user';
+  const args=ghArguments(method,route,method==='POST'?{body:C.marker}:undefined);
+  assert.deepEqual(args.slice(0,3),['api','--hostname','github.com']);
+ }
+ assert.throws(()=>ghArguments('POST',R+'/issues/31/comments',{body:C.marker}));
+ assert.throws(()=>ghArguments('POST','repos/other/repo/issues/30/comments',{body:C.marker}));
+ assert.throws(()=>ghArguments('PATCH',R+'/issues/30/comments',{body:C.marker}));
 });
