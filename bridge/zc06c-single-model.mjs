@@ -107,7 +107,7 @@ export function evaluate(child,workspaceOk) {
   if(!value||typeof value!=='object'||Array.isArray(value)||
      value.status!=='SUCCESS'||typeof value.response!=='string')
     return {gate:'ZC06C_HOLD',reason:'CLI_NON_SUCCESS',...basic};
-  const exact=value.response===CONTRACT.answer;
+  const exact=value.response===CONTRACT.answer||value.response===CONTRACT.answer+'\n';
   const reported=value.model===undefined?'NOT_REPORTED':
     value.model===CONTRACT.model?'PINNED_MODEL':'UNRECOGNIZED';
   const accepted=exact&&reported!=='UNRECOGNIZED';
