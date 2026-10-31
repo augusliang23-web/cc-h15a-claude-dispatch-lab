@@ -157,3 +157,67 @@ test('Z09 symlinked CLI entry does not silently exit 0; rejects unsafe args offl
     assert.equal(result.stderr, '');
     assert.deepEqual(fileList(root), ['linked-bridge']);
   }));
+
+
+test('Z10 offline symlinked CLI first and repeated invocation: receipt then HOLD', () =>
+  withDir(root => {
+    const actual = fileURLToPath(new URL('../zc02-mock-relay.mjs', import.meta.url));
+    const alias = path.join(root, 'aliased-bridge');
+    fs.symlinkSync(path.dirname(actual), alias, 'dir');
+
+    const home = path.join(root, 'home');
+    const bin = path.join(root, 'bin');
+    const calls = path.join(root, 'gh-calls.log');
+    fs.mkdirSync(home, {mode: 0o700});
+    fs.mkdirSync(bin, {mode: 0o700});
+
+    // Fake gh executable: one canned GET response per invocation, no network.
+    const gh = path.join(bin, 'gh');
+    fs.writeFileSync(gh, [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      'const args = process.argv.slice(2);',
+      'const expected = ' + JSON.stringify(['api','--hostname','github.com','-X','GET',
+        'repos/' + REPO + '/issues/' + ISSUE_NUMBER]) + ';',
+      "if (JSON.stringify(args) !== JSON.stringify(expected)) process.exit(7);",
+      "fs.appendFileSync(process.env.ZC02_TEST_GH_CALLS, 'GET\\n');",
+      "process.stdout.write(process.env.ZC02_TEST_ISSUE + '\\n');",
+      '',
+    ].join('\n'), {mode: 0o700});
+
+    const opts = {encoding: 'utf8', timeout: 5000, cwd: root, env: {
+      ...process.env, HOME: home,
+      PATH: bin + path.delimiter + (process.env.PATH || ''),
+      ZC02_TEST_GH_CALLS: calls, ZC02_TEST_ISSUE: JSON.stringify(makeIssue()),
+      GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0',
+    }};
+    const entry = path.join(alias, path.basename(actual));
+
+    const first = spawnSync(process.execPath, [entry, '--once'], opts);
+    assert.equal(first.error, undefined);
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(first.stderr, '');
+    const firstData = JSON.parse(first.stdout);
+    assert.equal(firstData.status, 'MOCK_COMPLETED_LOCAL_ONLY');
+    assert.equal(firstData.model_invoked, false);
+    assert.equal(firstData.github_writes, false);
+    assert.equal(firstData.simulated, true);
+
+    const second = spawnSync(process.execPath, [entry, '--once'], opts);
+    assert.equal(second.error, undefined);
+    assert.equal(second.status, 2, second.stderr);
+    assert.deepEqual(JSON.parse(second.stdout), {
+      status: 'HOLD', reason: 'ALREADY_CLAIMED_OR_CLAIM_UNCERTAIN',
+      execution_allowed: false, simulated: true,
+    });
+
+    const state = path.join(home, '.local', 'state', 'zc02-mock-relay');
+    assert.deepEqual(fs.readdirSync(state).sort(), [
+      EXPECTED.task_id + '.claim.json', EXPECTED.task_id + '.receipt.json',
+    ]);
+    assert.equal(fs.statSync(state).mode & 0o077, 0);
+    assert.equal(fs.statSync(path.join(state, EXPECTED.task_id + '.claim.json')).mode & 0o077, 0);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state,
+      EXPECTED.task_id + '.receipt.json'), 'utf8')), firstData);
+    assert.equal(fs.readFileSync(calls, 'utf8'), 'GET\nGET\n');
+  }));

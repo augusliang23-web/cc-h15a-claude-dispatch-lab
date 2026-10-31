@@ -53,7 +53,10 @@ Node was invoked through macOS's `/var` alias for `/private/var`. The fix
 compares `fs.realpathSync` paths for the CLI argument and module URL.
 Regression Z08 checks both path identities; Z09 launches the CLI through a
 symlink using an **invalid** argument and requires explicit `HOLD` exit 2.
-The regression intentionally makes **no GitHub request and no local claim**.
+Z10 simulates the complete first and repeat `--once` flow under an isolated
+HOME and a stubbed `gh` binary (fixed synthetic GET result): first run exit 0
+and receipt, second run exit 2 and HOLD. Z08-Z10 never contact GitHub or a
+model provider, and never touch the owner's real claim files.
 
 For any future separately authorized **fresh** canary, acceptance MUST check:
 - First invocation: exit code 0 **AND** nonempty JSON with
