@@ -284,9 +284,10 @@ test('Z14 receipt fsync failure stays HOLD and cannot replay a claimed task', ()
     const state = path.join(root,'state');
     fs.mkdirSync(state,{mode:0o700});
     const syncOriginal=fs.fsyncSync.bind(fs);
+    let fileSyncs = 0;
     const io={...fs,fsyncSync(fd){
       const st=fs.fstatSync(fd);
-      if (st.isFile() && st.size>200 && st.size<1000)
+      if (st.isFile() && ++fileSyncs === 2)
         throw Error('INJECTED_RECEIPT_SYNC_FAILURE');
       syncOriginal(fd);
     }};
