@@ -3,16 +3,19 @@
 import {createHash} from 'node:crypto';
 import {REQUIRED_DENY} from './zc06c-single-model.mjs';
 
-const digest=value=>createHash('sha256').update(value,'utf8').digest('hex');
+const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const denied=(reason)=>Object.freeze({gate:'ZC06C_PLAN_HOLD',reason,settings_changed:false,model_called:false});
 const record=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const own=(v,k)=>Object.prototype.hasOwnProperty.call(v,k);
 
-export function planRestrictedPolicy(originalText) {
- if(typeof originalText!=='string'||originalText.length<2||
-    Buffer.byteLength(originalText)>131072)return denied('INVALID_SETTINGS_BYTES');
+export function planRestrictedPolicy(originalBytes) {
+ if(!Buffer.isBuffer(originalBytes)||originalBytes.length<2||
+    originalBytes.length>131072)return denied('INVALID_SETTINGS_BYTES');
  let original;
- try{original=JSON.parse(originalText);}
+ try{
+  const decoder=new TextDecoder('utf-8',{fatal:true});
+  original=JSON.parse(decoder.decode(originalBytes));
+ }
  catch{return denied('INVALID_SETTINGS_JSON');}
  if(!record(original)||own(original,'__proto__')||
     own(original,'constructor')||own(original,'prototype'))
@@ -43,20 +46,20 @@ export function planRestrictedPolicy(originalText) {
   permissions:{...permissions,
    deny:[...new Set([...(permissions.deny||[]),...REQUIRED_DENY])]},
  };
- const temporaryText=JSON.stringify(restricted,null,2)+'\n';
+ const temporaryBytes=Buffer.from(JSON.stringify(restricted,null,2)+'\n','utf8');
  const plan={
   gate:'ZC06C_OFFLINE_POLICY_PLAN_ONLY',
   settings_changed:false,model_called:false,
-  original_sha256:digest(originalText),
-  temporary_sha256:digest(temporaryText),
-  original_bytes:Buffer.byteLength(originalText),
-  temporary_bytes:Buffer.byteLength(temporaryText),
+  original_sha256:digest(originalBytes),
+  temporary_sha256:digest(temporaryBytes),
+  original_bytes:originalBytes.length,
+  temporary_bytes:temporaryBytes.length,
   required_deny_count:REQUIRED_DENY.length,
  };
  // Internal-only non-enumerable field, omitted by JSON.stringify and default
  // inspection. Still sensitive if the caller explicitly reads it.
- Object.defineProperty(plan,'temporaryText',{
-  value:temporaryText,enumerable:false,writable:false,
+ Object.defineProperty(plan,'temporaryBytes',{
+  value:Buffer.from(temporaryBytes),enumerable:false,writable:false,
  });
  return Object.freeze(plan);
 }
@@ -64,12 +67,12 @@ export function planRestrictedPolicy(originalText) {
 // Does not write anything. A changed settings digest is a STOP, not an
 // invitation to overwrite concurrent work.
 export function assessTransition({
- currentText,expectedSha256,targetSha256
+ currentBytes,expectedSha256,targetSha256
 }={}){
- if(typeof currentText!=='string'||!(/^[0-9a-f]{64}$/).test(expectedSha256||'')||
+ if(!Buffer.isBuffer(currentBytes)||!(/^[0-9a-f]{64}$/).test(expectedSha256||'')||
     !(/^[0-9a-f]{64}$/).test(targetSha256||''))
    return denied('INVALID_TRANSITION_INPUT');
- const observed=digest(currentText);
+ const observed=digest(currentBytes);
  if(observed===expectedSha256)return Object.freeze({
   gate:'ZC06C_SOURCE_UNCHANGED',settings_changed:false,
   model_called:false,
@@ -80,13 +83,13 @@ export function assessTransition({
  });
  return denied('CONCURRENT_OR_UNKNOWN_SETTINGS_CHANGE');
 }
-export function verifyRestore(originalText,restoredText) {
- if(typeof originalText!=='string'||typeof restoredText!=='string')
+export function verifyRestore(originalBytes,restoredBytes) {
+ if(!Buffer.isBuffer(originalBytes)||!Buffer.isBuffer(restoredBytes))
    return denied('RESTORE_BYTES_UNAVAILABLE');
  return Object.freeze({
-  gate:originalText===restoredText?
+  gate:originalBytes.equals(restoredBytes)?
     'ZC06C_EXACT_RESTORE_BYTES_CONFIRMED':'ZC06C_RESTORE_MISMATCH',
-  restored_exactly:originalText===restoredText,
+  restored_exactly:originalBytes.equals(restoredBytes),
   settings_changed:false,
   model_called:false,
  });
