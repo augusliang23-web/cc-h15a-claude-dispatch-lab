@@ -265,7 +265,8 @@ test('Z13 a claim-directory fsync failure fails closed, keeps claim, no receipt'
     let failNext = true;
     const io = {...fs, fsyncSync(fd) {
       const st = fs.fstatSync(fd);
-      if (st.isDirectory() && failNext) {
+      if (st.isDirectory() && failNext &&
+          fs.existsSync(path.join(state, EXPECTED.task_id + '.claim.json'))) {
         failNext = false;
         throw Error('INJECTED_DIR_SYNC_FAILURE');
       }
@@ -337,7 +338,8 @@ test('Z17 interrupted nested mkdir reconfirms existing parent entries on retry',
     const syncOriginal=fs.fsyncSync.bind(fs);
     let first=true;
     const fault={...fs,fsyncSync(fd){
-      if (first && fs.fstatSync(fd).isDirectory()) {
+      if (first && fs.fstatSync(fd).isDirectory() &&
+          fs.existsSync(path.join(root,'nested'))) {
         first=false;throw Error('PARENT_FSYNC_FAILED');
       }
       syncOriginal(fd);
