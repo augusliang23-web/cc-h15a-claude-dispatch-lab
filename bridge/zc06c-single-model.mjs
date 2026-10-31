@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {spawn as nodeSpawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 export const CONTRACT=Object.freeze({
   task:'ZC06C_GEMINI_SINGLE_CALL_20261031_A1',
@@ -100,6 +100,7 @@ export function evaluate(child,workspaceOk) {
     agent_health_verified:false,one_provider_process_attempted:true};
   if(!workspaceOk)return {gate:'ZC06C_HOLD',reason:'WORKSPACE_CHANGED',...basic};
   if(!child||child.error||child.signal||child.status!==0||
+     child.groupExitObserved===false||child.exitObserved===false||child.stderrPresent===true||
      typeof child.stdout!=='string'||Buffer.byteLength(child.stdout)>32768)
     return {gate:'ZC06C_HOLD',reason:'CLI_NONZERO_TIMEOUT_OR_OUTPUT_INVALID',...basic};
   let value;
@@ -122,8 +123,85 @@ export function evaluate(child,workspaceOk) {
     usage_total_tokens:count,tool_use_verified_absent:false,
     ...basic};
 }
-export function runSingle({platform=process.platform,home=os.homedir(),io=fs,
-  spawn=spawnSync,temp=os.tmpdir(),env=process.env}={}) {
+
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+// A detached Mac process is group leader. Terminate the entire group, not just
+// its initial PID. A surviving group is an UNKNOWN outcome and never a PASS.
+export async function supervisedRun({
+ binary,args,cwd,env,timeoutMs=CONTRACT.timeoutMs,
+ launch=nodeSpawn,sendSignal=process.kill,
+}){
+ let child;
+ try {
+  child=launch(binary,args,{
+   cwd,env,shell:false,detached:true,windowsHide:true,
+   stdio:['ignore','pipe','pipe'],
+  });
+ }catch{return {error:'SPAWN_FAILED',status:null};}
+ const pid=child?.pid;
+ if(!Number.isSafeInteger(pid)||pid<=1||
+    !child.stdout||!child.stderr||
+    typeof child.once!=='function')return {error:'SPAWN_UNOBSERVABLE',status:null};
+ let out=[],bytes=0,overflow=false,stderrPresent=false;
+ let closed=false;
+ const ended=new Promise(resolve=>{
+  let settled=false;
+  const done=(status,signal,error)=>{
+   if(settled)return;
+   settled=true;closed=true;resolve({status,signal,error});
+  };
+  child.once('error',()=>done(null,null,'SPAWN_ERROR'));
+  child.once('close',(status,signal)=>done(status,signal,null));
+ });
+ const groupGone=()=>{
+  try{sendSignal(-pid,0);return false;}
+  catch(e){return e?.code==='ESRCH';}
+ };
+ const stop=signal=>{
+  try{sendSignal(-pid,signal);}catch{}
+ };
+ child.stdout.on('data',chunk=>{
+  bytes+=chunk.length;
+  if(bytes>32768){overflow=true;stop('SIGKILL');return;}
+  out.push(Buffer.from(chunk));
+ });
+ child.stderr.on('data',chunk=>{if(chunk.length)stderrPresent=true;});
+ let timer;
+ const first=await Promise.race([
+  ended,
+  new Promise(resolve=>{timer=setTimeout(()=>resolve({timeout:true}),timeoutMs);}),
+ ]);
+ clearTimeout(timer);
+ let result=first;
+ if(first.timeout){
+  stop('SIGTERM');
+  result=await Promise.race([ended,delay(1200).then(()=>({timeout:true}))]);
+  if(result.timeout){
+   stop('SIGKILL');
+   result=await Promise.race([ended,delay(1200).then(()=>({timeout:true}))]);
+  }
+ }
+ // A clean parent exit does not imply its entire process group exited.
+ if(!groupGone()){
+  stop('SIGTERM');
+  await delay(150);
+  if(!groupGone()){
+   stop('SIGKILL');
+   await delay(150);
+  }
+ }
+ const groupExitObserved=groupGone();
+ return {
+  error:first.timeout?'TIMEOUT':overflow?'OUTPUT_LIMIT':
+     result.timeout?'PROCESS_STILL_ALIVE':result.error||null,
+  status:result.status??null,signal:result.signal??null,
+  stdout:Buffer.concat(out).toString('utf8'),
+  stderrPresent,groupExitObserved,exitObserved:closed,
+ };
+}
+
+export async function runSingle({platform=process.platform,home=os.homedir(),io=fs,
+  spawn=supervisedRun,temp=os.tmpdir(),env=process.env}={}) {
   if(platform!=='darwin')return hold('MAC_ONLY');
   if(process.getuid?.()===0)return hold('NO_ROOT');
   if(env.ZC06C_OVERAGES_OFF_CONFIRMED!=='YES')return hold('OVERAGES_OFF_NOT_RECONFIRMED');
@@ -147,10 +225,9 @@ export function runSingle({platform=process.platform,home=os.homedir(),io=fs,
   }catch{return hold('ISOLATED_WORKSPACE_FAILED');}
   let child;
   try{
-    child=spawn(binary,ARGS,{
-      cwd:workspace,shell:false,encoding:'utf8',
-      timeout:CONTRACT.timeoutMs,maxBuffer:32768,
-      windowsHide:true,input:'',
+    child=await spawn({
+      binary,args:ARGS,cwd:workspace,
+      timeoutMs:CONTRACT.timeoutMs,
       env:safeEnvironment({home,tmp:temp,pathValue:env.PATH}),
     });
   }catch{child={error:true};}
@@ -166,7 +243,7 @@ export function direct(entry,url,io=fs){
 }
 if(direct(process.argv[1],import.meta.url)){
   const answer=process.argv.length===3&&process.argv[2]==='--once'?
-    runSingle():hold('ONLY_EXPLICIT_ONCE_SUPPORTED');
+    await runSingle():hold('ONLY_EXPLICIT_ONCE_SUPPORTED');
   process.stdout.write(JSON.stringify(answer)+'\n');
   if(answer.gate!=='ZC06C_SINGLE_RESPONSE_OBSERVED')process.exitCode=2;
 }
