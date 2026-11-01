@@ -24,7 +24,10 @@ function fixture(fn){
  try{return fn({opts,home,file,dir});}
  finally{fs.rmSync(home,{recursive:true,force:true});}
 }
-const recovered=r=>assert.equal(r.gate,'ZC06C_MAC_EXACT_RESTORE_CONFIRMED');
+const recovered=r=>{
+ assert.equal(r.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ assert.equal(r.reason,'RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
+};
 test('MT01 temporary real fixture config is byte-identically restored',()=>fixture(({opts,file,dir})=>{
  const before=fs.readFileSync(file);
  const r=executeMacPolicyTrial(opts);
@@ -33,7 +36,7 @@ test('MT01 temporary real fixture config is byte-identically restored',()=>fixtu
  assert.equal(r.credentials_emitted,false);
  assert.equal(fs.readFileSync(file).equals(before),true);
  assert.equal(fs.statSync(file).mode&0o777,0o600);
- assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
 }));
 test('MT02 existing Antigravity desktop process blocks any writes',()=>fixture(({opts,file,dir})=>{
  const before=fs.readFileSync(file);
@@ -70,7 +73,7 @@ test('MT06 exception after applying restriction restores original',()=>fixture((
  }});
  recovered(r);
  assert.equal(fs.readFileSync(file).equals(originalBytes),true);
- assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
 }));
 test('MT07 concurrent unknown edit after restriction is never overwritten',()=>fixture(({opts,file,dir})=>{
  const unknown=Buffer.from('{"interleaving":"other actor"}\n');
@@ -245,7 +248,7 @@ test('MT24 one transient ACL error on restore stage does not strand recovery',()
  };
  const r=executeMacPolicyTrial({...opts,aclScan});
  assert.equal(failed,true);
- assert.equal(r.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(r.reason,'RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
  assert.equal(fs.existsSync(path.join(dir,'settings.zc06c.restore.tmp')),false);
  const tx=path.join(dir,'.zc06c-restore-once');
  assert.equal(fs.existsSync(tx),true);
@@ -266,7 +269,7 @@ test('MT25 persistent ACL refusal leaves recoverable backup without bad staging'
  assert.equal(fs.existsSync(tx),true);
  assert.ok(fs.readdirSync(tx).some(n=>/^restore\.[0-9a-f]{24}\.tmp$/.test(n)));
  const retried=executeMacPolicyTrial({...opts,recoverOnly:true});
- assert.equal(retried.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(retried.reason,'RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
  assert.equal(fs.existsSync(tx),true);
  assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
  assert.equal(fs.readFileSync(file).equals(before),true);
@@ -296,7 +299,7 @@ test('MT26 failed random stage preserves a substituted pathname',()=>fixture(({o
  assert.equal(fs.existsSync(substituted+'.original'),true);
  assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
  const retried=executeMacPolicyTrial({...opts,recoverOnly:true});
- assert.equal(retried.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(retried.reason,'RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
  assert.equal(fs.readFileSync(path.join(dir,'settings.json')).equals(before),true);
  assert.equal(fs.readFileSync(substituted,'utf8'),'OTHER_WRITER');
  assert.equal(fs.existsSync(substituted+'.original'),true);
@@ -311,13 +314,53 @@ test('MT27 unrelated file within recovery directory must not be removed on exact
  const r=executeMacPolicyTrial({...opts,phaseHook:state=>{
   if(state==='AFTER_APPLY')fs.writeFileSync(unrelated,'UNTRUSTED_PAYLOAD',{mode:0o600});
  }});
- assert.equal(r.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(r.reason,'RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
  assert.equal(fs.readFileSync(file).equals(before),true);
  assert.equal(fs.readFileSync(unrelated,'utf8'),'UNTRUSTED_PAYLOAD');
  assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
  assert.equal(fs.existsSync(path.join(tx,'manifest.json')),true);
  const again=executeMacPolicyTrial({...opts,recoverOnly:true});
- assert.equal(again.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(again.reason,'RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
  assert.equal(fs.readFileSync(unrelated,'utf8'),'UNTRUSTED_PAYLOAD');
  assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
+}));
+
+test('MT28 same-UID replacement of known backup name before cleanup inspection is never deleted',()=>fixture(({opts,file,dir})=>{
+ const before=fs.readFileSync(file);
+ const root=path.join(dir,'.zc06c-restore-once');
+ const target=path.join(root,'original.bytes');
+ let replaced=false;
+ const r=executeMacPolicyTrial({...opts,phaseHook:phase=>{
+  if(phase==='BEFORE_RECOVERY_READONLY_INSPECTION'){
+   fs.renameSync(target,target+'.trusted');
+   fs.writeFileSync(target,'OTHER_WRITER',{mode:0o600});
+   replaced=true;
+  }
+ }});
+ assert.equal(replaced,true);
+ recovered(r);
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(fs.readFileSync(target,'utf8'),'OTHER_WRITER');
+ assert.equal(fs.existsSync(target+'.trusted'),true);
+ assert.equal(fs.existsSync(path.join(root,'manifest.json')),true);
+}));
+
+test('MT29 same-UID substitution after cleanup inspection preserves known manifest name',()=>fixture(({opts,file,dir})=>{
+ const before=fs.readFileSync(file);
+ const root=path.join(dir,'.zc06c-restore-once');
+ const target=path.join(root,'manifest.json');
+ let replaced=false;
+ const r=executeMacPolicyTrial({...opts,phaseHook:phase=>{
+  if(phase==='AFTER_RECOVERY_READONLY_INSPECTION'){
+   fs.renameSync(target,target+'.trusted');
+   fs.writeFileSync(target,'OTHER_WRITER',{mode:0o600});
+   replaced=true;
+  }
+ }});
+ assert.equal(replaced,true);
+ recovered(r);
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(fs.readFileSync(target,'utf8'),'OTHER_WRITER');
+ assert.equal(fs.existsSync(target+'.trusted'),true);
+ assert.equal(fs.existsSync(path.join(root,'original.bytes')),true);
 }));
