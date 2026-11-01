@@ -95,3 +95,12 @@ The new `bridge/zc06c-crossprocess-fixture.mjs` and its CP01–CP08 tests exerci
 The synthetic fixture rejects paths outside its own `zc06c-crossproc-...` temporary namespace and never accesses `~/.gemini/antigravity-cli/settings.json`, billing, the actual AgY executable or the owner's project repositories. The process-exit simulation does **not** simulate OS power loss, torn writes, fsync failure at every possible instruction, or real macOS APFS crash recovery. Nor does it establish that global Deny works for the installed CLI version.
 
 After CP01–CP08 pass on Linux CI, the next useful non-invasive step is a pinned-SHA Mac run of those eight tests; this requires no settings changes, only temporary synthetic fixture files. The run remains **strictly no-provider** and must not be conflated with permission to run a real model.
+
+
+### TOCTOU / concurrent writer limitation after final hash check
+
+Codex identified a P2: a second process can write settings between the hash inspection and `rename` replacement. The cross-process **synthetic** fixture now checks the settings hash once again just before apply and just before restore, and tests CP09–CP10 inject a competing writer after journal update to confirm HOLD without overwriting **in those observable interleavings**.
+
+However this does **not** provide atomic compare-and-swap. An uncooperative writer can still mutate the file after the last check. Portable Node filesystem API has no atomic check-current-hash-and-replace primitive. A production Mac transaction must use an exclusive cooperating lock and confirm no other AgY settings users; external noncooperating writes remain a residual risk. The actual user settings must never be changed under the current design-only authorization.
+
+**Guarantee language:** We detect changes present at inspection and specific test interleavings; we do **not** guarantee preserving concurrent writes at every timing or true power-loss-safe restoration. If a conflicting active process cannot be excluded, STOP rather than attempt the global transaction. Neither CI nor synthetic tests prove the owner Mac is free of concurrent writers.
