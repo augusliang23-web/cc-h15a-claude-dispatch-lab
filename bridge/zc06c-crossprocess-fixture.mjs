@@ -96,12 +96,14 @@ export function simulateSyntheticApply(root){
      sha(secureRead(root,'restricted.synthetic'))!==j.restricted)
     return fail('SOURCE_CHANGED');
   journalWrite(root,{...j,state:'APPLYING'});
+  if(sha(secureRead(root,'settings.synthetic.json'))!==j.original)
+    return fail('SOURCE_CHANGED_DURING_PREPARATION');
   replace(root,'settings.synthetic.json',secureRead(root,'restricted.synthetic'),'apply.next');
   journalWrite(root,{...j,state:'APPLIED'});
   return response('ZC06C_CROSSPROC_SYNTHETIC_APPLIED','SIMULATED_ONLY');
  }catch{return fail('SYNTHETIC_APPLY_UNCERTAIN');}
 }
-export function recoverSyntheticFixture(root){
+export function recoverSyntheticFixture(root,{beforeFinalCheck}={}){
  try{
   if(!trustedRoot(root))return fail('UNTRUSTED_FIXTURE_ROOT');
   const j=readJournal(root);
@@ -112,6 +114,12 @@ export function recoverSyntheticFixture(root){
    'ZC06C_CROSSPROC_EXACT_BYTES_RESTORED','ORIGINAL_PRESENT');
   if(sha(settings)!==j.restricted)return fail('CONCURRENT_OR_UNKNOWN_SETTINGS_CHANGE');
   journalWrite(root,{...j,state:'RECOVERING'});
+  // Best-effort final check detects edits between initial inspection and
+  // preparation. This is NOT an atomic compare-and-swap: noncooperating
+  // writers can still race after this check.
+  if(typeof beforeFinalCheck==='function')beforeFinalCheck(root);
+  const latest=secureRead(root,'settings.synthetic.json');
+  if(sha(latest)!==j.restricted)return fail('CONCURRENT_OR_UNKNOWN_SETTINGS_CHANGE');
   replace(root,'settings.synthetic.json',backup,'restore.next');
   if(!secureRead(root,'settings.synthetic.json').equals(backup))
     return fail('RESTORE_MISMATCH');
