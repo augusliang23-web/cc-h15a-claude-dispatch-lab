@@ -53,6 +53,7 @@ test('CB05 different but valid task SHA is a scope mismatch',()=>hold(run(x=>x.e
 test('CB06 type confusion via array event ID is rejected',()=>hold(run(x=>x.event.eventId=['event-0001']),'INVALID_ENVELOPE'));
 test('CB07 processed replay is rejected before new proposal',()=>hold(follow(claim(),'CLAIM',null,x=>{
  x.ledger.seenEvents.push('event-0002');
+ x.ledger.revision=2;
 }),'DUPLICATE_EVENT'));
 test('CB08 older unique event cannot override watermark',()=>hold(follow(claim(),'CLAIM',null,x=>{
  x.event.observedAt='2026-11-01T01:00:59Z';
@@ -178,6 +179,7 @@ test('CB32 missing or overfull event history fails closed',()=>{
  hold(run(x=>{
   x.ledger.seenEvents=Array.from({length:16},(_,i)=>'prior-'+String(i).padStart(4,'0'));
   x.ledger.lastObservedAt='2026-11-01T00:59:00Z';
+  x.ledger.revision=16;
  }),'EVENT_HISTORY_FULL');
 });
 test('CB33 invalid attempt caps and excessive lease TTL fail closed',()=>{
@@ -188,4 +190,66 @@ test('CB34 malformed settle tuple or lease array is rejected',()=>{
  const r=claim();
  hold(follow(r,'COMPLETE','PASS',x=>x.event.leaseId=['a'.repeat(64)]),'INVALID_ENVELOPE');
  hold(follow(r,'COMPLETE','PASS',x=>x.event.completion='AUTO_MERGE'),'INVALID_ENVELOPE');
+});
+
+test('CB35 newest exact-head QA failure advances watermark before older PASS',()=>{
+ const newer=run(x=>{
+  x.event.eventId='event-0002';
+  x.event.observedAt='2026-11-01T01:02:00Z';
+  x.event.proof.ciCheckedAt='2026-11-01T01:01:20Z';
+  x.event.proof.qaCheckedAt='2026-11-01T01:01:30Z';
+  x.event.proof.qa='FAIL';
+  x.now='2026-11-01T01:02:05Z';
+ });
+ hold(newer,'NEGATIVE_VERIFICATION_RECORDED');
+ assert.equal(newer.proposed_ledger.revision,1);
+ assert.equal(newer.proposed_ledger.lastObservedAt,'2026-11-01T01:02:00Z');
+ assert.deepEqual(newer.proposed_ledger.seenEvents,['event-0002']);
+ assert.equal(newer.proposed_ledger.activeLease,null);
+ const x=clone();x.ledger=structuredClone(newer.proposed_ledger);x.expectedRevision=1;
+ x.now='2026-11-01T01:02:10Z'; // older event 01:01 cannot supersede 01:02 failure
+ hold(proposeClaimTransition(x),'SUPERSEDED_EVENT');
+});
+test('CB36 explicit HALT remains sticky with stale CI proof',()=>{
+ const r=run(x=>{
+  x.event.kind='HALT';
+  x.event.proof.ciCheckedAt='2026-11-01T00:55:00Z';
+ });
+ safe(r);
+ assert.equal(r.reason,'SAFETY_GATE');
+ assert.equal(r.proposed_ledger.terminalGate,'SAFETY_HOLD');
+ hold(follow(r,'CLAIM',null),'STICKY_TERMINAL_GATE');
+});
+test('CB37 high-risk findings stop even with stale proof',()=>{
+ const r=run(x=>{
+  x.event.proof.risk='HIGH';
+  x.event.proof.qaCheckedAt='2026-11-01T00:54:00Z';
+ });
+ safe(r);assert.equal(r.reason,'SAFETY_GATE');
+ assert.equal(r.proposed_ledger.terminalGate,'SAFETY_HOLD');
+});
+test('CB38 cannot propose claim with expiry already earlier than evaluation clock',()=>{
+ hold(run(x=>{x.now='2026-11-01T01:04:00Z';}),'CLAIM_LEASE_ALREADY_EXPIRED');
+});
+test('CB39 injected active lease with zero recorded attempts cannot settle',()=>{
+ const first=claim();
+ const token=first.proposed_ledger.activeLease;
+ const r=follow(first,'COMPLETE','PASS',x=>{
+  x.ledger=structuredClone(clone().ledger);
+  x.ledger.activeLease=structuredClone(token);
+  x.expectedRevision=0;
+ });
+ hold(r,'INVALID_ENVELOPE');
+});
+test('CB40 orphaned lease claimEventId not present in processed history is invalid',()=>{
+ const r=follow(claim(),'COMPLETE','PASS',x=>{
+  x.ledger.activeLease.claimEventId='event-9999';
+ });
+ hold(r,'INVALID_ENVELOPE');
+});
+test('CB41 inconsistent ledger revision and processed count cannot authorize claim',()=>{
+ const r=follow(claim(),'CLAIM',null,x=>{
+  x.ledger.revision=99;x.expectedRevision=99;
+ });
+ hold(r,'INVALID_ENVELOPE');
 });
