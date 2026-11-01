@@ -41,7 +41,10 @@ const ledgerOk=l=>exact(l,['protocol','revision','task','maxClaims','maxLeaseSec
  l.seenEvents.every(id)&&new Set(l.seenEvents).size===l.seenEvents.length&&
  leaseOk(l.activeLease)&&['NONE','SAFETY_HOLD','READY_FOR_OWNER'].includes(l.terminalGate)&&
  (l.seenEvents.length===0)===(l.lastObservedAt===null)&&
- (l.activeLease===null||l.activeLease.sha===l.task.sha)&&
+ // Every accepted event must advance one revision and one processed event.
+ l.revision===l.seenEvents.length&&l.usedClaims<=l.revision&&
+ (l.activeLease===null||(l.activeLease.sha===l.task.sha&&l.usedClaims>0&&
+   l.seenEvents.includes(l.activeLease.claimEventId)))&&
  (l.terminalGate==='NONE'||l.activeLease===null);
 const eventOk=e=>exact(e,['protocol','eventId','kind','observedAt','task','proof','leaseId','completion'])&&
  e.protocol===PROTOCOL&&id(e.eventId)&&['CLAIM','COMPLETE','HALT'].includes(e.kind)&&
@@ -64,25 +67,29 @@ export function proposeClaimTransition(input) {
  if(at>clock||clock-at>300_000)return hold('STALE_OR_FUTURE_EVENT');
  if(l.seenEvents.length>=16)return hold('EVENT_HISTORY_FULL');
  const p=e.proof;
- const ciTime=date(p.ciCheckedAt),qaTime=date(p.qaCheckedAt);
- if(ciTime>at||qaTime>at||at-ciTime>300_000||at-qaTime>300_000)
-   return hold('STALE_OR_FUTURE_PROOF');
  const advance=(terminalGate=l.terminalGate,activeLease=l.activeLease,usedClaims=l.usedClaims)=>({
   ...l,revision:l.revision+1,lastObservedAt:e.observedAt,
   seenEvents:[...l.seenEvents,e.eventId],terminalGate,activeLease,usedClaims
  });
- // Safety stops are sticky; on explicit HALT or unsafe evidence, never claim another worker.
+ // Safety stops are independent of the freshness required for positive proof.
  if(e.kind==='HALT'||p.risk==='HIGH'||p.risk==='SECURITY'||
     p.permissionsChanged||p.findings>0)
    return out('HOLD','SAFETY_GATE',advance('SAFETY_HOLD',null));
+ const ciTime=date(p.ciCheckedAt),qaTime=date(p.qaCheckedAt);
+ if(ciTime>at||qaTime>at||at-ciTime>300_000||at-qaTime>300_000)
+   return hold('STALE_OR_FUTURE_PROOF');
  if(p.ciHead!==l.task.sha||p.qaHead!==l.task.sha)
    return hold('EXACT_HEAD_MISMATCH');
- if(p.ci!=='PASS'||p.qa!=='PASS')return hold('CI_QA_NOT_VERIFIED');
+ // Record valid negative exact-head findings so an older positive event
+ // cannot overtake them. This is only a proposed watermark write.
+ if(p.ci!=='PASS'||p.qa!=='PASS')
+   return out('HOLD','NEGATIVE_VERIFICATION_RECORDED',advance());
  if(e.kind==='CLAIM') {
   if(l.activeLease!==null)return hold('ACTIVE_OR_EXPIRED_LEASE_REQUIRES_RECONCILIATION');
   if(l.usedClaims>=l.maxClaims)return hold('ATTEMPT_CAP_REACHED');
   const leaseId=hash([PROTOCOL,l.task.taskId,l.task.sha,e.eventId,l.revision].join('|'));
   const expiresAt=new Date(at+l.maxLeaseSeconds*1000).toISOString().replace('.000Z','Z');
+  if(date(expiresAt)<=clock)return hold('CLAIM_LEASE_ALREADY_EXPIRED');
   return out('MOCK_CLAIM_PROPOSED','REVISION_PINNED_NOT_DURABLE',
     advance('NONE',{leaseId,claimEventId:e.eventId,expiresAt,sha:l.task.sha},l.usedClaims+1));
  }
