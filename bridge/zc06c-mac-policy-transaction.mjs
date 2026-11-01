@@ -132,13 +132,28 @@ const readManifest=(root,uid)=>{
    throw Error('MANIFEST_INVALID');
  return val;
 };
+// Never recursively remove a transaction directory: failed random stages,
+// unexpected same-UID entries, or symlink substitutions must be preserved.
+// A clean, exact two-file record may be removed only by explicit names; an
+// unexpected entry means restored settings are not sufficient to close the gate.
 const cleanRecovery=(dir,root,uid)=>{
  safeStat(root,uid,'dir');
+ const expected=new Set([MANIFEST,BACKUP]);
+ const entries=fs.readdirSync(root);
+ if(entries.length!==expected.size||
+    entries.some(name=>!expected.has(name)))return false;
  for(const name of [MANIFEST,BACKUP]){
-  safeStat(path.join(root,name),uid);
+  const st=safeStat(path.join(root,name),uid);
+  if((st.mode&0o077)!==0)return false;
  }
- fs.rmSync(root,{recursive:true,force:false});
+ // Explicit unlink of *known* records, never rm -r: new unfamiliar files
+ // introduced during cleanup cannot be recursively deleted. A same-UID writer
+ // can still race known pathnames; this is NOT an OS isolation guarantee.
+ fs.unlinkSync(path.join(root,MANIFEST));
+ fs.unlinkSync(path.join(root,BACKUP));
+ fs.rmdirSync(root);
  syncDir(dir);
+ return true;
 };
 const restore=(dir,uid,ps,aclScan)=>{
  if(!processQuiescent({ps}))return hold('ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
@@ -158,7 +173,8 @@ const restore=(dir,uid,ps,aclScan)=>{
   // Source already exact. Only cleanup after exact restore verified.
   if(!verifyRestore(saved,current).restored_exactly)
     return hold('ORIGINAL_BYTES_MISMATCH');
-  cleanRecovery(dir,root,uid);
+  if(!cleanRecovery(dir,root,uid))
+   return hold('RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
   return result('ZC06C_MAC_EXACT_RESTORE_CONFIRMED',
     {restore:'ORIGINAL_ALREADY_PRESENT'});
  }
@@ -176,7 +192,8 @@ const restore=(dir,uid,ps,aclScan)=>{
  const observed=assertSettings(dir,uid);
  if(!verifyRestore(saved,observed.bytes).restored_exactly||
     observed.mode!==m.mode)return hold('RESTORE_VERIFICATION_FAILED');
- cleanRecovery(dir,root,uid);
+ if(!cleanRecovery(dir,root,uid))
+  return hold('RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
  return result('ZC06C_MAC_EXACT_RESTORE_CONFIRMED',
   {restore:'FROM_PRIVATE_BACKUP'});
 };
