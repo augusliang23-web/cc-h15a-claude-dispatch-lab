@@ -85,14 +85,18 @@ test('CP07 duplicate synthetic apply fails without replay',()=>fixture(root=>{
  assert.equal(JSON.parse(again.stdout).reason,'NOT_PREPARED');
  assert.equal(fs.readFileSync(root+'/settings.synthetic.json').equals(after),true);
 }));
-test('CP08 symlinked marker invalidates synthetic recovery',()=>fixture(root=>{
- assert.equal(child('apply',root).status,77);
- fs.renameSync(root+'/synthetic.fixture',root+'/original.marker');
- fs.symlinkSync(root+'/original.marker',root+'/synthetic.fixture');
- const result=child('recover',root);
- assert.equal(result.status,4);
- assert.equal(JSON.parse(result.stdout).reason,'RECOVERY_UNCERTAIN');
- // Repair only the synthetic fixture marker so its strict dispose guard can run.
- fs.unlinkSync(root+'/synthetic.fixture');
- fs.renameSync(root+'/original.marker',root+'/synthetic.fixture');
-}));
+test('CP08 symlinked marker invalidates synthetic recovery',()=>{
+ const state=createSyntheticFixture();
+ assert.equal(state.gate,'ZC06C_CROSSPROC_FIXTURE_CREATED');
+ const root=state.root;
+ try{
+  assert.equal(child('apply',root).status,77);
+  fs.renameSync(root+'/synthetic.fixture',root+'/original.marker');
+  fs.symlinkSync(root+'/original.marker',root+'/synthetic.fixture');
+  const result=child('recover',root);
+  assert.equal(result.status,4);
+  assert.equal(JSON.parse(result.stdout).reason,'RECOVERY_UNCERTAIN');
+  // The test owns this freshly minted temp dir; cleanup must not loosen
+  // the production-style fixture trust check merely to handle a bad marker.
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
