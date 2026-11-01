@@ -36,3 +36,11 @@ GitHub Actions workflow (separate Draft-only, exact PR number) runs only these s
 5. Only then, with explicit owner approval, turn on one controlled worker. No autonomous Merge or Deploy.
 
 Current gate: `OFFLINE_POLICY_AND_CLAIM_PROPOSAL_ONLY / LIVE_DISPATCH_HOLD`.
+
+## Review-1 P2 remediation — recorded exact-HEAD negative evidence
+
+Codex reviewed initial `3d773bf2` and identified four P2 edge cases; the next candidate closes them by proposing an immutable revision advance when a **structurally valid exact-head CI/QA failure** is observed. The negative event's ID and observed timestamp are stored in the *proposed* ledger so an older green result cannot subsequently claim work. This still is **not durable** until a future authorized compare-and-swap store commits it.
+
+Explicit `HALT`, HIGH/SECURITY risks, permissions changes and positive findings now propose sticky `SAFETY_HOLD` **before** the CI/QA proof freshness check; a recent safety event carrying old CI/QA evidence cannot be silently discarded. An expired prospective lease is never proposed, even if the event itself falls inside the 5-minute event-freshness window. Ledger validation now requires `revision === seenEvents.length`, positive claims before any active lease and a lease claimEventId previously recorded in the event history. These are syntactic lifecycle constraints, not proof of external authority.
+
+Test coverage grew from 34 to 41 cases. GitHub Actions [run #41289555312](https://github.com/augusliang23-web/cc-h15a-claude-dispatch-lab/actions/runs/41289555312) passed **41/41** on exact source/test HEAD `e92778b7b2c87dad381a265663b8f013dc4d4873`; the document commit changes HEAD again and requires independent exact-HEAD verification before final QA acceptance. No live worker, durable ledger or file/network write was activated.
