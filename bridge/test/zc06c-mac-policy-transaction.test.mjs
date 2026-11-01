@@ -225,8 +225,8 @@ test('MT23 inherited ACL on new private backup fails before writing source bytes
  }});
  assert.equal(result.gate,'ZC06C_MAC_TRANSACTION_HOLD');
  const backup=path.join(dir,'.zc06c-restore-once','original.bytes');
- assert.equal(fs.existsSync(backup),true);
- assert.equal(fs.statSync(backup).size,0);
+ // A failed O_EXCL-created backup is cleaned up, never left as a blocker.
+ assert.equal(fs.existsSync(backup),false);
 }));
 
 
