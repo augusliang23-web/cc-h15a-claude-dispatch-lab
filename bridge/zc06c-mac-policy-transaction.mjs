@@ -37,11 +37,11 @@ export const noMacAcl=(file,aclScan=spawnSync)=>{
    env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
   });
   if(r.status!==0||r.error||r.signal||typeof r.stdout!=='string')return false;
-  const lines=r.stdout.split(/\\r?\\n/).filter(Boolean);
-  const token=lines[0]?.trim().split(/\\s+/)[0];
+  const lines=r.stdout.split(/\r?\n/).filter(Boolean);
+  const token=lines[0]?.trim().split(/\s+/)[0];
   if(!token||token.length<10||token.length>12||
      !['-','d','l'].includes(token[0])||token.includes('+'))return false;
-  if(lines.slice(1).some(x=>/^\\s*\\d+:/.test(x)))return false;
+  if(lines.slice(1).some(x=>/^\s*\d+:/.test(x)))return false;
   return true;
  }catch{return false;}
 };
