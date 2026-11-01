@@ -225,8 +225,11 @@ test('MT23 inherited ACL on new private backup fails before writing source bytes
  }});
  assert.equal(result.gate,'ZC06C_MAC_TRANSACTION_HOLD');
  const backup=path.join(dir,'.zc06c-restore-once','original.bytes');
- // A failed O_EXCL-created backup is cleaned up, never left as a blocker.
- assert.equal(fs.existsSync(backup),false);
+ // Fail closed: ACL rejection happens before bytes are written. The private
+ // marker remains for manual reconciliation; do NOT silently unlink it.
+ assert.equal(fs.existsSync(backup),true);
+ assert.equal(fs.statSync(backup).size,0);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
 }));
 
 
@@ -235,7 +238,7 @@ test('MT24 one transient ACL error on restore stage does not strand recovery',()
  const before=fs.readFileSync(file);
  const aclScan=(_binary,args)=>{
   const name=path.basename(args[1]);
-  if(name==='settings.zc06c.restore.tmp'&&!failed){
+  if(/^restore\.[0-9a-f]{24}\.tmp$/.test(name)&&!failed){
    failed=true;return {status:1,stdout:'',stderr:'SYNTHETIC_ACL_TIMEOUT'};
   }
   return {status:0,stdout:'-rw------- 1 owner staff 10 Nov 1 00:00 fixture\n'};
@@ -244,19 +247,46 @@ test('MT24 one transient ACL error on restore stage does not strand recovery',()
  assert.equal(failed,true);
  recovered(r);
  assert.equal(fs.existsSync(path.join(dir,'settings.zc06c.restore.tmp')),false);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
  assert.equal(fs.readFileSync(file).equals(before),true);
  assert.equal(JSON.stringify(r).includes('SYNTHETIC_ACL_TIMEOUT'),false);
 }));
 test('MT25 persistent ACL refusal leaves recoverable backup without bad staging',()=>fixture(({opts,file,dir})=>{
  const before=fs.readFileSync(file);
  const denyRestore=(_binary,args)=>({
-  status:path.basename(args[1])==='settings.zc06c.restore.tmp'?1:0,
+  status:/^restore\.[0-9a-f]{24}\.tmp$/.test(path.basename(args[1]))?1:0,
   stdout:'-rw------- 1 owner staff 10 Nov 1 00:00 fixture\n'
  });
  const first=executeMacPolicyTrial({...opts,aclScan:denyRestore});
  assert.equal(first.gate,'ZC06C_MAC_TRANSACTION_HOLD');
  assert.equal(fs.existsSync(path.join(dir,'settings.zc06c.restore.tmp')),false);
- assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ const tx=path.join(dir,'.zc06c-restore-once');
+ assert.equal(fs.existsSync(tx),true);
+ assert.ok(fs.readdirSync(tx).some(n=>/^restore\.[0-9a-f]{24}\.tmp$/.test(n)));
  recovered(executeMacPolicyTrial({...opts,recoverOnly:true}));
  assert.equal(fs.readFileSync(file).equals(before),true);
+}));
+
+// The failed temporary stage is private and randomized; never delete a
+// pathname that an unrelated same-UID writer could have swapped in.
+test('MT26 failed random stage preserves a substituted pathname',()=>fixture(({opts,dir})=>{
+ const tx=path.join(dir,'.zc06c-restore-once');
+ let substituted;
+ const aclScan=(_binary,args)=>{
+  const name=path.basename(args[1]);
+  if(/^restore\.[0-9a-f]{24}\.tmp$/.test(name)){
+   if(!substituted){
+    substituted=args[1];
+    fs.renameSync(substituted,substituted+'.original');
+    fs.writeFileSync(substituted,'OTHER_WRITER', {mode:0o600});
+   }
+   return {status:1,stdout:'',stderr:'ACL_UNAVAILABLE'};
+  }
+  return {status:0,stdout:'-rw------- 1 owner staff 10 Nov 1 00:00 fixture\n'};
+ };
+ const r=executeMacPolicyTrial({...opts,aclScan});
+ assert.equal(r.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ assert.equal(fs.readFileSync(substituted,'utf8'),'OTHER_WRITER');
+ assert.equal(fs.existsSync(substituted+'.original'),true);
+ assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
 }));
