@@ -1,0 +1,53 @@
+# Issue #41 — ephemeral, standalone, offline-only ZC-09B1 claim contract tests.
+name: ZC09B1 synthetic claim ledger CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'bridge/zc09b-claim-ledger.mjs'
+      - 'bridge/test/zc09b-claim-ledger.test.mjs'
+      - 'docs/zc09b-claim-ledger.md'
+      - '.github/workflows/zc09b-claim-ledger-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zc09b1-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-claim:
+    if: >-
+      github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.event.pull_request.number == 42 &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.head_ref == 'zc/zc09b1-offline-claim-ledger' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact draft HEAD without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Node 22 without npm install or cache
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Validate exact HEAD and syntax
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          node --check bridge/zc09b-claim-ledger.mjs
+          node --check bridge/test/zc09b-claim-ledger.test.mjs
+      - name: Run offline negative and positive claim transitions
+        run: node --test --test-reporter=spec bridge/test/zc09b-claim-ledger.test.mjs
