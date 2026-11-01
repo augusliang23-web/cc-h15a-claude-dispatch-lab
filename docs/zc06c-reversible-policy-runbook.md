@@ -168,3 +168,18 @@ The experimental candidate now inspects the recovery directory's immediate entry
 **Residual risk:** pathname check + named unlink still cannot provide atomic exclusion against an adversarial same-UID process racing those *known* names. The owner selected the existing Mac account, so this is not an OS-level filesystem isolation guarantee. The real Mac trial, global settings edits, actual Gemini call and unattended execution remain **HOLD** pending native macOS evidence, security review and the required owner gates.
 
 Verified isolated GitHub Actions for HEAD `9ef54d172be8b2b38289489540ef0b3ef1e7136f`: [Run #41286375208](https://github.com/augusliang23-web/cc-h15a-claude-dispatch-lab/actions/runs/41286375208), **369/369 PASS** (Linux synthetic). The tests do not establish native macOS safety, and an exact-HEAD independent Codex review is still missing.
+
+### ZC-06C R4 — no automated cleanup without OS-enforced isolation
+
+The next exact-HEAD independent Codex review found one remaining P2 in R3: checking `manifest.json` and `original.bytes` by name/owner/mode before deleting them still permits a different process with the **same macOS user identity** to replace either path after inspection. The cleanup could delete the substitute, even if only the two expected names exist. No re-stat, hash, inode comparison or additional pathname check can provide an atomic file ownership guarantee across an untrusted same-UID writer.
+
+**Conservative R4 behavior:**
+- All source policy restore attempts still verify raw saved settings bytes and original mode before reaching the end of a transaction.
+- `cleanRecovery` intentionally performs **no destructive operation** (no unlink, rmdir, recursive removal), even when exactly two expected files are present.
+- Successful byte/mode restoration returns `ZC06C_MAC_TRANSACTION_HOLD` / `RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED`, NOT `ZC06C_MAC_EXACT_RESTORE_CONFIRMED`. The remaining recovery directory intentionally blocks a new apply attempt.
+- MT28/MT29 inject substitutions of the two *known* recovery file names before and after a read-only cleanup checkpoint and verify both foreign files and the original settings persist. Earlier MT tests have been updated to expect retained records.
+- The candidate does **not** provide a safe automated cleanup or an approved owner-side manual deletion recipe. Manual reconciliation must establish current file provenance and OS session safety independently; never simply remove all files to make the gate green.
+
+This deliberately sacrifices a successful self-cleaning outcome until a reviewed stronger isolation primitive or revised transaction architecture can protect the files against a same-UID adversary. Native macOS filesystem semantics, actual ACL enforcement, CLI tool-deny policy and real Gemini usage remain **HOLD**. A green Linux synthetic CI only attests its modeled behavior.
+
+R4 candidate pending exact-HEAD CI and independent Codex security review. No owner Mac, provider, Merge, Deploy or automatic worker action was performed.
