@@ -1,0 +1,53 @@
+# ZC-09B2 issue #43: Linux fixture-only, no provider, no real claims.
+name: ZC09B2 isolated fixture CAS CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'bridge/zc09b2-fixture-cas.mjs'
+      - 'bridge/test/zc09b2-fixture-cas.test.mjs'
+      - 'docs/zc09b2-fixture-cas.md'
+      - '.github/workflows/zc09b2-fixture-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zc09b2-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-linux-fixture:
+    if: >-
+      github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.event.pull_request.number == 44 &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.head_ref == 'zc/zc09b2-fixture-cas' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Exact PR HEAD without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Node 22 without npm dependencies or cache
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Verify exact HEAD and JavaScript syntax
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          node --check bridge/zc09b2-fixture-cas.mjs
+          node --check bridge/test/zc09b2-fixture-cas.test.mjs
+      - name: Exercise CAS/replay/crash/competing-process Linux fixtures
+        run: node --test --test-reporter=spec bridge/test/zc09b2-fixture-cas.test.mjs
