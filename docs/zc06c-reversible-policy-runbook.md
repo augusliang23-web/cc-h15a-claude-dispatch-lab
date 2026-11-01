@@ -130,3 +130,13 @@ A new experimental command has been implemented in \`bridge/zc06c-mac-policy-tra
 - Only \`ZC06C_MAC_EXACT_RESTORE_CONFIRMED\` plus a separate owner-run trace and independent security review establish that one trial restored its observed settings bytes. They do **not** establish unrestricted production readiness.
 
 **Incremental AI usage for this config-only run is zero** by design (no provider action), though GitHub Actions CI may consume included runner minutes. Full development "Zero Copy" dispatch remains a later separate milestone.
+
+
+### Codex P1/P2 adjustments before Mac write
+
+The first review of the live config-only runner identified three real blockers:
+- **P1:** \`--recover-only\` originally bypassed the Antigravity process-quiescence check. **Fixed:** all recovery paths now refuse to change settings when a known Antigravity/agy process is present. This may deliberately defer recovery until the owner closes the app; never kill that app automatically.
+- **P2:** temporary JSON can exceed 128 KiB even when original JSON passes validation. **Fixed:** reject any proposed temporary settings above 131072 bytes **before backup or replacement**.
+- **P2:** an original file with matching bytes but altered permissions must not be called fully restored. **Fixed:** require original mode and raw bytes to match the saved manifest before deleting backup and returning PASS; reject unexpected restricted mode too.
+
+Five additional synthetic tests MT14–MT18 exercise those exact cases. The runner still cannot guarantee protection against noncooperating writers racing after a hash comparison, and does not attest that AgY implements the Deny list. The only authorized live action remains config-only apply-and-restore; any provider/model execution is prohibited.
