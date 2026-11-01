@@ -118,7 +118,8 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const arg=process.argv.length===3?process.argv[2]:'';
   const output=arg==='--demo'
     ?simulateZeroCopy()
-    :{...MODES,gate:'ZC07_MOCK_HOLD',reason:'ONLY_OFFLINE_DEMO_ALLOWED'};
+    :{...MODES,synthetic:true,requires_owner_approval:true,gate:'ZC07_MOCK_HOLD',
+      reason:'ONLY_OFFLINE_DEMO_ALLOWED',trace:[],trace_digest:'GENESIS'};
   process.stdout.write(JSON.stringify(output)+'\n');
   if(output.gate!=='ZC07_MOCK_FLOW_PASS_NOT_LIVE_AUTHORIZED')process.exitCode=2;
 }
