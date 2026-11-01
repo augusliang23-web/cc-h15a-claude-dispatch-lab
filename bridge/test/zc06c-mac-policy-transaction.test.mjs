@@ -75,7 +75,7 @@ test('MT07 concurrent unknown edit after restriction is never overwritten',()=>f
   if(state==='AFTER_APPLY')fs.writeFileSync(file,unknown);
  }});
  assert.equal(r.gate,'ZC06C_MAC_TRANSACTION_HOLD');
- assert.equal(r.reason,'UNKNOWN_OR_CONCURRENT_SETTINGS_CHANGE');
+ assert.equal(r.reason,'RESTRICTED_POLICY_VERIFICATION_FAILED');
  assert.equal(fs.readFileSync(file).equals(unknown),true);
  assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
  const recover=executeMacPolicyTrial({...opts,recoverOnly:true});
