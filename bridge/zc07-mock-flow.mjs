@@ -3,6 +3,7 @@
 // All PRs, commits, CI outcomes and Codex verdicts below are explicitly MOCKED.
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {realpathSync} from 'node:fs';
 import path from 'node:path';
 
 const hash = value => createHash('sha256')
@@ -105,16 +106,57 @@ export function verifyTrace(envelope) {
   }
   if(envelope.trace_digest!==previous)return false;
   const events=envelope.trace.map(e=>e.event);
-  if(envelope.gate==='ZC07_MOCK_FLOW_PASS_NOT_LIVE_AUTHORIZED')
-    return JSON.stringify(events)===JSON.stringify([
+  if(envelope.gate==='ZC07_MOCK_FLOW_PASS_NOT_LIVE_AUTHORIZED') {
+    if(events.join('|') !== [
       'task.accepted','dispatch.accepted','candidate.proposed',
-      'ci.passed','qa.approved','gate.owner_review']) &&
-      envelope.reason==='SYNTHETIC_ONLY';
+      'ci.passed','qa.approved','gate.owner_review'].join('|') ||
+      envelope.reason!=='SYNTHETIC_ONLY' ||
+      envelope.requires_owner_approval!==true) return false;
+    const [task,dispatch,proposal,ci,qa,owner] = envelope.trace;
+    const fields=(e,event,actor,keys) =>
+      e.event===event && e.actor===actor && keysExactly(e.detail,keys);
+    if(!fields(task,'task.accepted','mock-control-plane',['task_id','task_digest']) ||
+       !fields(dispatch,'dispatch.accepted','mock-gemini',['task_digest','tools_allowed']) ||
+       !fields(proposal,'candidate.proposed','mock-gemini',['commit','patch_applied','target_path','pr']) ||
+       !fields(ci,'ci.passed','mock-github',['commit','tests','pass','fail']) ||
+       !fields(qa,'qa.approved','mock-codex',['reviewed','findings']) ||
+       !fields(owner,'gate.owner_review','mock-control-plane',['candidate','production_ready','provider_verified']))return false;
+    const proof=task.detail.task_digest;
+    const commit='SIMULATED-'+hash(proof+':fixture-candidate').slice(0,16);
+    return typeof task.detail.task_id==='string' &&
+      /^[A-Z][A-Z0-9-]{2,49}$/.test(task.detail.task_id) &&
+      typeof proof==='string' && /^[a-f0-9]{64}$/.test(proof) &&
+      dispatch.detail.task_digest===proof && dispatch.detail.tools_allowed===0 &&
+      proposal.detail.commit===commit && proposal.detail.patch_applied===false &&
+      typeof proposal.detail.target_path==='string' &&
+      /^docs\\/fixture-[a-z0-9-]{1,40}\\.md$/.test(proposal.detail.target_path) &&
+      proposal.detail.pr==='SIMULATED_ONLY' &&
+      ci.detail.commit===commit && ci.detail.tests===1 &&
+      ci.detail.pass===1 && ci.detail.fail===0 &&
+      qa.detail.reviewed===commit && qa.detail.findings===0 &&
+      owner.detail.candidate===commit &&
+      owner.detail.production_ready===false &&
+      owner.detail.provider_verified===false;
+  }
   return envelope.gate==='ZC07_MOCK_HOLD' &&
-    events.at(-1)==='gate.hold';
+    envelope.requires_owner_approval===true &&
+    events.at(-1)==='gate.hold' &&
+    envelope.trace.at(-1).actor==='mock-control-plane' &&
+    keysExactly(envelope.trace.at(-1).detail,['reason']) &&
+    envelope.trace.at(-1).detail.reason===envelope.reason;
 }
 
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+// Node ESM resolves symlinks to their real module path. The CLI guard must
+// compare real file identities, not the caller's aliased /var, symlink or /proc path.
+function isDirectInvocation() {
+  if(!process.argv[1])return false;
+  try {
+    return realpathSync(path.resolve(process.argv[1]))===realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false; // a missing/unresolvable entry point cannot opt into a live mode
+  }
+}
+if(isDirectInvocation()){
   const arg=process.argv.length===3?process.argv[2]:'';
   const output=arg==='--demo'
     ?simulateZeroCopy()
