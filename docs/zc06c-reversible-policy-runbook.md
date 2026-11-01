@@ -140,3 +140,12 @@ The first review of the live config-only runner identified three real blockers:
 - **P2:** an original file with matching bytes but altered permissions must not be called fully restored. **Fixed:** require original mode and raw bytes to match the saved manifest before deleting backup and returning PASS; reject unexpected restricted mode too.
 
 Five additional synthetic tests MT14–MT18 exercise those exact cases. The runner still cannot guarantee protection against noncooperating writers racing after a hash comparison, and does not attest that AgY implements the Deny list. The only authorized live action remains config-only apply-and-restore; any provider/model execution is prohibited.
+
+
+### Codex macOS ACL and no-op policy guards
+
+The second review of the owner-authorized config-only runner found two more P2 issues:
+- On macOS, BSD mode 0600/0700 alone is insufficient if ACL entries grant additional file or inherited directory access. The runner now uses read-only \`/bin/ls -lde\` checks on the trusted HOME/config ancestry, the original settings, the private recovery directory and newly created staging/backup files **before writing secret-bearing bytes**. It rejects explicit ACL markers/entries and unverifiable output. These checks are conservative and need native macOS confirmation; Linux CI mocks macOS ACL output.
+- A byte-identical already-restricted JSON should not be replaced, since its original mode might be 0400 and an unnecessary 0600 replacement can strand restoration. The runner now returns \`POLICY_ALREADY_IDENTICAL_NO_WRITE\` before any backup or config write.
+
+Synthetic regression cases MT19–MT23 cover declared ACLs, unknown ACL state, inherited ACL on backup creation and a byte-identical 0400 policy. Neither a mocked \`ls\` nor a clean Codex review alone proves macOS ACL safety. The code still cannot guarantee race-free protection against arbitrary noncooperating settings writers.
