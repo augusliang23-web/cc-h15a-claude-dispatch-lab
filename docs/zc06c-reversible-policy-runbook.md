@@ -86,3 +86,12 @@ It uses real fixture-only file creates, `fsync`, atomic renames, backup hashes a
 For every simulated failure/recovery result, `simulated:true`, `user_settings_modified:false`, `model_called:false`. Recovery in this fixture happens inside one test process; it does **not** constitute a tested durable cross-process crash recovery mechanism. The fixture is cleaned up at completion. A live Mac transaction implementation, independent OS-level tests and exact owner approval remain separate gates.
 
 **Gate:** offline fixture rehearsal PASS is necessary preparation, but is never sufficient to unlock any real settings write or Gemini call.
+
+
+## Cross-process synthetic recovery rehearsal
+
+The new `bridge/zc06c-crossprocess-fixture.mjs` and its CP01–CP08 tests exercise **separate Node processes** and a deliberately private synthetic temporary directory. A child process applies restricted synthetic settings and exits without restoring; another separate child process reads the on-disk journal and original backup and restores the synthetic settings byte-for-byte. The tests also check unknown concurrent modifications, corrupted backup, invalid journal, duplicate apply and symlinked fixture markers.
+
+The synthetic fixture rejects paths outside its own `zc06c-crossproc-...` temporary namespace and never accesses `~/.gemini/antigravity-cli/settings.json`, billing, the actual AgY executable or the owner's project repositories. The process-exit simulation does **not** simulate OS power loss, torn writes, fsync failure at every possible instruction, or real macOS APFS crash recovery. Nor does it establish that global Deny works for the installed CLI version.
+
+After CP01–CP08 pass on Linux CI, the next useful non-invasive step is a pinned-SHA Mac run of those eight tests; this requires no settings changes, only temporary synthetic fixture files. The run remains **strictly no-provider** and must not be conflated with permission to run a real model.
