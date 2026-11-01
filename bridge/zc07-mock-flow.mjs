@@ -129,7 +129,43 @@ export function verifyTrace(envelope) {
       dispatch.detail.task_digest===proof && dispatch.detail.tools_allowed===0 &&
       proposal.detail.commit===commit && proposal.detail.patch_applied===false &&
       typeof proposal.detail.target_path==='string' &&
-      /^docs\\/fixture-[a-z0-9-]{1,40}\\.md$/.test(proposal.detail.target_path) &&
+      new RegExp('^docs/fixture-[a-z0-9-]{1,40}[.]md
+      proposal.detail.pr==='SIMULATED_ONLY' &&
+      ci.detail.commit===commit && ci.detail.tests===1 &&
+      ci.detail.pass===1 && ci.detail.fail===0 &&
+      qa.detail.reviewed===commit && qa.detail.findings===0 &&
+      owner.detail.candidate===commit &&
+      owner.detail.production_ready===false &&
+      owner.detail.provider_verified===false;
+  }
+  return envelope.gate==='ZC07_MOCK_HOLD' &&
+    envelope.requires_owner_approval===true &&
+    events.at(-1)==='gate.hold' &&
+    envelope.trace.at(-1).actor==='mock-control-plane' &&
+    keysExactly(envelope.trace.at(-1).detail,['reason']) &&
+    envelope.trace.at(-1).detail.reason===envelope.reason;
+}
+
+// Node ESM resolves symlinks to their real module path. The CLI guard must
+// compare real file identities, not the caller's aliased /var, symlink or /proc path.
+function isDirectInvocation() {
+  if(!process.argv[1])return false;
+  try {
+    return realpathSync(path.resolve(process.argv[1]))===realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false; // a missing/unresolvable entry point cannot opt into a live mode
+  }
+}
+if(isDirectInvocation()){
+  const arg=process.argv.length===3?process.argv[2]:'';
+  const output=arg==='--demo'
+    ?simulateZeroCopy()
+    :{...MODES,synthetic:true,requires_owner_approval:true,gate:'ZC07_MOCK_HOLD',
+      reason:'ONLY_OFFLINE_DEMO_ALLOWED',trace:[],trace_digest:'GENESIS'};
+  process.stdout.write(JSON.stringify(output)+'\n');
+  if(output.gate!=='ZC07_MOCK_FLOW_PASS_NOT_LIVE_AUTHORIZED')process.exitCode=2;
+}
+).test(proposal.detail.target_path) &&
       proposal.detail.pr==='SIMULATED_ONLY' &&
       ci.detail.commit===commit && ci.detail.tests===1 &&
       ci.detail.pass===1 && ci.detail.fail===0 &&
