@@ -1,0 +1,52 @@
+# ZC-09A-QA01: synthetic policy only, no providers or executor.
+name: ZC09A offline Auto-Continue policy CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'bridge/zc09-auto-continue.mjs'
+      - 'bridge/test/zc09-auto-continue.test.mjs'
+      - '.github/workflows/zc09a-offline-policy-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zc09a-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  offline-policy:
+    if: >-
+      github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.event.pull_request.number == 39 &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.head_ref == 'zc/zc09a-bounded-auto-continue-offline' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact proposed HEAD without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Setup Node 22 without dependency installation
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Verify exact SHA and syntax
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check bridge/zc09-auto-continue.mjs
+          node --check bridge/test/zc09-auto-continue.test.mjs
+      - name: Execute synthetic-only bounded policy tests
+        run: node --test --test-reporter=spec bridge/test/zc09-auto-continue.test.mjs
