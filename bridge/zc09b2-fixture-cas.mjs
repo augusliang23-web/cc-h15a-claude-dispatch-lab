@@ -101,7 +101,9 @@ const rawRead=(dir,locked=false)=>{
  return unpack(fs.readFileSync(path.join(dir,FILE)));
 };
 const sameTask=(a,b)=>a.taskId===b.taskId&&a.repo===b.repo&&a.pr===b.pr&&a.sha===b.sha;
-const sameLease=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+// JSON object insertion order has no semantic meaning for a validated lease.
+const sameLease=(a,b)=>a===b||(a!==null&&b!==null&&
+ ['leaseId','claimEventId','expiresAt','sha'].every(k=>a[k]===b[k]));
 const validAdvance=(a,b,clock)=>{
  if(!ledgerOk(b)||!sameTask(a.task,b.task)||a.protocol!==b.protocol||
     a.maxClaims!==b.maxClaims||b.revision!==a.revision+1||
