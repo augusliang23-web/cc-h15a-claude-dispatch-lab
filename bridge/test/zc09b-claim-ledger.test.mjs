@@ -53,7 +53,7 @@ test('CB05 different but valid task SHA is a scope mismatch',()=>hold(run(x=>x.e
 test('CB06 type confusion via array event ID is rejected',()=>hold(run(x=>x.event.eventId=['event-0001']),'INVALID_ENVELOPE'));
 test('CB07 processed replay is rejected before new proposal',()=>hold(follow(claim(),'CLAIM',null,x=>{
  x.ledger.seenEvents.push('event-0002');
- x.ledger.revision=2;
+ x.ledger.revision=2;x.expectedRevision=2;
 }),'DUPLICATE_EVENT'));
 test('CB08 older unique event cannot override watermark',()=>hold(follow(claim(),'CLAIM',null,x=>{
  x.event.observedAt='2026-11-01T01:00:59Z';
@@ -81,10 +81,10 @@ test('CB15 mismatched QA commit is not exact-head verification',()=>hold(run(x=>
 }),'EXACT_HEAD_MISMATCH'));
 test('CB16 missing CI evidence fails closed',()=>hold(run(x=>{
  x.event.proof.ci='UNKNOWN';
-}),'CI_QA_NOT_VERIFIED'));
+}),'NEGATIVE_VERIFICATION_RECORDED'));
 test('CB17 QA changes requested cannot authorize claims',()=>hold(run(x=>{
  x.event.proof.qa='FAIL';
-}),'CI_QA_NOT_VERIFIED'));
+}),'NEGATIVE_VERIFICATION_RECORDED'));
 test('CB18 findings produce a sticky synthetic STOP',()=>{
  const r=run(x=>x.event.proof.findings=1);
  safe(r);assert.equal(r.reason,'SAFETY_GATE');
@@ -179,7 +179,7 @@ test('CB32 missing or overfull event history fails closed',()=>{
  hold(run(x=>{
   x.ledger.seenEvents=Array.from({length:16},(_,i)=>'prior-'+String(i).padStart(4,'0'));
   x.ledger.lastObservedAt='2026-11-01T00:59:00Z';
-  x.ledger.revision=16;
+  x.ledger.revision=16;x.expectedRevision=16;
  }),'EVENT_HISTORY_FULL');
 });
 test('CB33 invalid attempt caps and excessive lease TTL fail closed',()=>{
