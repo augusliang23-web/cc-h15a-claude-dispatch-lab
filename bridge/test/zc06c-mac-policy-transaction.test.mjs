@@ -116,3 +116,66 @@ test('MT13 direct CLI cannot run model or settings changes with --once',()=>{
  assert.equal(child.status,2);
  assert.equal(JSON.parse(child.stdout).reason,'NO_PROVIDER_TRANSACTION_FLAG_REQUIRED');
 });
+
+
+test('MT14 recovery refuses to change policy while Antigravity desktop is present',()=>fixture(({opts,file,dir})=>{
+ const before=fs.readFileSync(file);
+ const initial=executeMacPolicyTrial({...opts,
+  phaseHook:state=>{if(state==='AFTER_DURABLE_BACKUP')throw Error('synthetic interruption');}});
+ assert.equal(initial.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ const blocked=executeMacPolicyTrial({...opts,recoverOnly:true,
+  ps:()=>({status:0,stdout:'/Applications/Antigravity.app/Contents/MacOS/Antigravity\n'})});
+ assert.equal(blocked.reason,'ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ recovered(executeMacPolicyTrial({...opts,recoverOnly:true}));
+}));
+test('MT15 oversized proposed temporary JSON is rejected before any writes',()=>fixture(({opts,file,dir})=>{
+ const baseline=Buffer.from(JSON.stringify({padding:'x'.repeat(130900)})+'\n');
+ assert.ok(baseline.length<=131072);
+ fs.writeFileSync(file,baseline,{mode:0o600});
+ const result=executeMacPolicyTrial(opts);
+ assert.equal(result.reason,'TEMPORARY_SETTINGS_TOO_LARGE');
+ assert.equal(fs.readFileSync(file).equals(baseline),true);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT16 recovery must not report exact restore when original mode drifted',()=>fixture(({opts,file,dir})=>{
+ const result=executeMacPolicyTrial({...opts,phaseHook:state=>{
+  if(state==='AFTER_DURABLE_BACKUP'){
+   fs.chmodSync(file,0o400);
+   throw Error('synthetic unexpected mode change');
+  }
+ }});
+ assert.equal(result.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ const restored=executeMacPolicyTrial({...opts,recoverOnly:true});
+ assert.equal(restored.reason,'ORIGINAL_MODE_CHANGED');
+ assert.equal(fs.statSync(file).mode&0o777,0o400);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ fs.chmodSync(file,0o600);
+ recovered(executeMacPolicyTrial({...opts,recoverOnly:true}));
+}));
+test('MT17 restricted settings mode drift prevents automatic overwrite',()=>fixture(({opts,file,dir})=>{
+ const res=executeMacPolicyTrial({...opts,phaseHook:state=>{
+  if(state==='AFTER_APPLY')fs.chmodSync(file,0o400);
+ }});
+ assert.equal(res.reason,'RESTRICTED_MODE_CHANGED');
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ assert.equal(executeMacPolicyTrial({...opts,recoverOnly:true}).reason,'RESTRICTED_MODE_CHANGED');
+ fs.chmodSync(file,0o600);
+ recovered(executeMacPolicyTrial({...opts,recoverOnly:true}));
+}));
+test('MT18 app start during transaction blocks restore until quiescent',()=>fixture(({opts,file,dir})=>{
+ let appStarted=false;
+ const ps=()=>({status:0,stdout:appStarted?
+  '/Applications/Antigravity.app/Contents/MacOS/Antigravity\n':
+  '/sbin/launchd\n'});
+ const before=fs.readFileSync(file);
+ const result=executeMacPolicyTrial({...opts,ps,phaseHook:state=>{
+  if(state==='AFTER_APPLY')appStarted=true;
+ }});
+ assert.equal(result.reason,'ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ appStarted=false;
+ recovered(executeMacPolicyTrial({...opts,ps,recoverOnly:true}));
+ assert.equal(fs.readFileSync(file).equals(before),true);
+}));
