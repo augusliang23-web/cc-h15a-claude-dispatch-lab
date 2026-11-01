@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {executeMacPolicyTrial} from '../zc06c-mac-policy-transaction.mjs';
+import {executeMacPolicyTrial,noMacAcl} from '../zc06c-mac-policy-transaction.mjs';
+import {planRestrictedPolicy} from '../zc06c-policy-plan.mjs';
 
 const original=Buffer.from('{\n  "toolPermission":"request-review",\n  "theme":"fixture"\n}\n');
 function fixture(fn){
@@ -17,7 +18,9 @@ function fixture(fn){
  const file=path.join(dir,'settings.json');
  fs.writeFileSync(file,original,{mode:0o600});
  const opts={home,platform:'darwin',uid:process.getuid?.()??1000,
-   ps:()=>({status:0,stdout:'/sbin/launchd\n',stderr:''})};
+   ps:()=>({status:0,stdout:'/sbin/launchd\n',stderr:''}),
+   // GitHub CI runs on Linux, so simulate the macOS ls -lde format.
+   aclScan:()=>({status:0,stdout:'-rw------- 1 owner group 100 Nov 1 00:00 fixture\n'})};
  try{return fn({opts,home,file,dir});}
  finally{fs.rmSync(home,{recursive:true,force:true});}
 }
@@ -178,4 +181,50 @@ test('MT18 app start during transaction blocks restore until quiescent',()=>fixt
  appStarted=false;
  recovered(executeMacPolicyTrial({...opts,ps,recoverOnly:true}));
  assert.equal(fs.readFileSync(file).equals(before),true);
+}));
+
+test('MT19 macOS ACL marker and entry are rejected before backup',()=>fixture(({opts,dir})=>{
+ const result=executeMacPolicyTrial({...opts,
+  aclScan:()=>({status:0,stdout:'drwx------+ 1 owner staff 0 Nov 1 00:00 directory\n 0: group:everyone allow read\n'})});
+ assert.equal(result.reason,'ACL_UNSAFE_OR_UNVERIFIED');
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT20 denied ACL inspection is not treated as ACL-free',()=>fixture(({opts,dir})=>{
+ const result=executeMacPolicyTrial({...opts,
+  aclScan:()=>({status:1,stdout:'',stderr:'private synthetic message'})});
+ assert.equal(result.reason,'ACL_UNSAFE_OR_UNVERIFIED');
+ assert.equal(JSON.stringify(result).includes('private synthetic'),false);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT21 byte-identical restricted JSON is a no-write even with mode 0400',()=>fixture(({opts,file,dir})=>{
+ const plan=planRestrictedPolicy(original);
+ assert.equal(plan.gate,'ZC06C_OFFLINE_POLICY_PLAN_ONLY');
+ fs.writeFileSync(file,plan.temporaryBytes);
+ fs.chmodSync(file,0o400);
+ const before=fs.readFileSync(file);
+ const result=executeMacPolicyTrial(opts);
+ assert.equal(result.reason,'POLICY_ALREADY_IDENTICAL_NO_WRITE');
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(fs.statSync(file).mode&0o777,0o400);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT22 parsed ACL without plus still rejects inherited ACL entries',()=>{
+ assert.equal(noMacAcl('/synthetic',()=>({
+  status:0,stdout:'-rw------- 1 owner group 20 Nov 1 00:00 file\n 0: group:everyone allow read\n'
+ })),false);
+ assert.equal(noMacAcl('/synthetic',()=>({
+  status:0,stdout:'-rw------- 1 owner group 20 Nov 1 00:00 file\n'
+ })),true);
+});
+test('MT23 inherited ACL on new private backup fails before writing source bytes',()=>fixture(({opts,dir})=>{
+ const result=executeMacPolicyTrial({...opts,aclScan:(_bin,args)=>{
+  const file=args[1];
+  return {status:0,stdout:path.basename(file)==='original.bytes'
+   ?'-rw-------+ 1 owner group 0 Nov 1 00:00 original.bytes\n 0: group:everyone allow read\n'
+   :'-rw------- 1 owner group 0 Nov 1 00:00 file\n'};
+ }});
+ assert.equal(result.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ const backup=path.join(dir,'.zc06c-restore-once','original.bytes');
+ assert.equal(fs.existsSync(backup),true);
+ assert.equal(fs.statSync(backup).size,0);
 }));
