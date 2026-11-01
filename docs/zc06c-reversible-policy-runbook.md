@@ -149,3 +149,10 @@ The second review of the owner-authorized config-only runner found two more P2 i
 - A byte-identical already-restricted JSON should not be replaced, since its original mode might be 0400 and an unnecessary 0600 replacement can strand restoration. The runner now returns \`POLICY_ALREADY_IDENTICAL_NO_WRITE\` before any backup or config write.
 
 Synthetic regression cases MT19–MT23 cover declared ACLs, unknown ACL state, inherited ACL on backup creation and a byte-identical 0400 policy. Neither a mocked \`ls\` nor a clean Codex review alone proves macOS ACL safety. The code still cannot guarantee race-free protection against arbitrary noncooperating settings writers.
+
+
+### Restore staging cleanup after transient ACL failure
+
+A subsequent exact-HEAD Codex review reported P2: an ACL check failure after creating an owner-private restore staging file could leave an empty file that causes both automatic and explicit recovery to HOLD forever. The corrected \`newFile\` handling unlinks **only** the currently open descriptor's own inode (verified by file/device identifiers and no symlink) after a failed staged write; it never deletes another file merely because a path name matches. The durable original backup is preserved.
+
+Regression tests MT24–MT25 simulate a one-time ACL scan error and a persistent ACL refusal on the restore stage. A persistent failure yields HOLD and leaves a recovery backup; when ACL scanning is safe, an explicit \`--recover-only\` can succeed. This is still synthetic Linux evidence; the owner must verify the actual Mac run independently, with Antigravity closed and no provider call.
