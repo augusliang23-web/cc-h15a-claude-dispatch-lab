@@ -116,14 +116,17 @@ const cleanRecovery=(dir,root,uid)=>{
  fs.rmSync(root,{recursive:true,force:false});
  syncDir(dir);
 };
-const restore=(dir,uid)=>{
+const restore=(dir,uid,ps)=>{
+ if(!processQuiescent({ps}))return hold('ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
  const root=path.join(dir,TX);
  const m=readManifest(root,uid);
  const saved=fs.readFileSync(path.join(root,BACKUP));
  if(sha(saved)!==m.originalHash)return hold('BACKUP_HASH_MISMATCH');
- const current=assertSettings(dir,uid).bytes;
+ const currentState=assertSettings(dir,uid);
+ const current=currentState.bytes;
  const currentHash=sha(current);
  if(currentHash===m.originalHash){
+  if(currentState.mode!==m.mode)return hold('ORIGINAL_MODE_CHANGED');
   // Source already exact. Only cleanup after exact restore verified.
   if(!verifyRestore(saved,current).restored_exactly)
     return hold('ORIGINAL_BYTES_MISMATCH');
@@ -133,6 +136,7 @@ const restore=(dir,uid)=>{
  }
  if(currentHash!==m.restrictedHash)
   return hold('UNKNOWN_OR_CONCURRENT_SETTINGS_CHANGE');
+ if(currentState.mode!==0o600)return hold('RESTRICTED_MODE_CHANGED');
  if(fs.existsSync(path.join(dir,RESTORING)))
   return hold('UNKNOWN_RESTORE_STAGING_FILE');
  // A final check closes only observable windows. Another noncooperating
@@ -159,7 +163,7 @@ export function executeMacPolicyTrial({
   root=path.join(dir,TX);
   if(recoverOnly){
    if(!fs.existsSync(root))return hold('NO_RECOVERY_RECORD');
-   return restore(dir,uid);
+   return restore(dir,uid,ps);
   }
   if(fs.existsSync(root)||fs.existsSync(path.join(dir,APPLIED))||
      fs.existsSync(path.join(dir,RESTORING)))
@@ -172,6 +176,9 @@ export function executeMacPolicyTrial({
   const plan=planRestrictedPolicy(baseline.bytes);
   if(plan.gate!=='ZC06C_OFFLINE_POLICY_PLAN_ONLY')
    return hold('UNSAFE_EXISTING_POLICY');
+  // The restricted JSON can be larger than the valid original input.
+  // Never install bytes that our own bounded recovery cannot inspect.
+  if(plan.temporary_bytes>131072)return hold('TEMPORARY_SETTINGS_TOO_LARGE');
   // Restrict writable configuration file to owner. Preserve original mode.
   fs.mkdirSync(root,{mode:0o700});
   syncDir(dir);
@@ -193,12 +200,12 @@ export function executeMacPolicyTrial({
   phaseHook('AFTER_APPLY',{dir});
   if(sha(assertSettings(dir,uid).bytes)!==plan.temporary_sha256)
    return hold('RESTRICTED_POLICY_VERIFICATION_FAILED');
-  return restore(dir,uid);
+  return restore(dir,uid,ps);
  }catch{
   // When possible, restore now; if uncertain, leave the durable private
   // backup/manifest for explicit --recover-only. Never overwrite unknown edits.
   if(settingsReplaced&&dir&&root){
-   try{return restore(dir,uid);}
+   try{return restore(dir,uid,ps);}
    catch{return hold('RECOVERY_NEEDED_AFTER_FAILURE');}
   }
   return hold('PREFLIGHT_OR_TRANSACTION_FAILURE');
