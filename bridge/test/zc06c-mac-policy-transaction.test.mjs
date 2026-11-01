@@ -245,9 +245,11 @@ test('MT24 one transient ACL error on restore stage does not strand recovery',()
  };
  const r=executeMacPolicyTrial({...opts,aclScan});
  assert.equal(failed,true);
- recovered(r);
+ assert.equal(r.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
  assert.equal(fs.existsSync(path.join(dir,'settings.zc06c.restore.tmp')),false);
- assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+ const tx=path.join(dir,'.zc06c-restore-once');
+ assert.equal(fs.existsSync(tx),true);
+ assert.ok(fs.readdirSync(tx).some(n=>/^restore\.[0-9a-f]{24}\.tmp$/.test(n)));
  assert.equal(fs.readFileSync(file).equals(before),true);
  assert.equal(JSON.stringify(r).includes('SYNTHETIC_ACL_TIMEOUT'),false);
 }));
@@ -263,7 +265,10 @@ test('MT25 persistent ACL refusal leaves recoverable backup without bad staging'
  const tx=path.join(dir,'.zc06c-restore-once');
  assert.equal(fs.existsSync(tx),true);
  assert.ok(fs.readdirSync(tx).some(n=>/^restore\.[0-9a-f]{24}\.tmp$/.test(n)));
- recovered(executeMacPolicyTrial({...opts,recoverOnly:true}));
+ const retried=executeMacPolicyTrial({...opts,recoverOnly:true});
+ assert.equal(retried.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(fs.existsSync(tx),true);
+ assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
  assert.equal(fs.readFileSync(file).equals(before),true);
 }));
 
@@ -284,9 +289,35 @@ test('MT26 failed random stage preserves a substituted pathname',()=>fixture(({o
   }
   return {status:0,stdout:'-rw------- 1 owner staff 10 Nov 1 00:00 fixture\n'};
  };
+ const before=fs.readFileSync(path.join(dir,'settings.json'));
  const r=executeMacPolicyTrial({...opts,aclScan});
  assert.equal(r.gate,'ZC06C_MAC_TRANSACTION_HOLD');
  assert.equal(fs.readFileSync(substituted,'utf8'),'OTHER_WRITER');
  assert.equal(fs.existsSync(substituted+'.original'),true);
+ assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
+ const retried=executeMacPolicyTrial({...opts,recoverOnly:true});
+ assert.equal(retried.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(fs.readFileSync(path.join(dir,'settings.json')).equals(before),true);
+ assert.equal(fs.readFileSync(substituted,'utf8'),'OTHER_WRITER');
+ assert.equal(fs.existsSync(substituted+'.original'),true);
+ assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
+ assert.equal(fs.existsSync(path.join(tx,'manifest.json')),true);
+}));
+
+test('MT27 unrelated file within recovery directory must not be removed on exact restore',()=>fixture(({opts,file,dir})=>{
+ const tx=path.join(dir,'.zc06c-restore-once');
+ const before=fs.readFileSync(file);
+ const unrelated=path.join(tx,'OTHER_WRITER_FILE');
+ const r=executeMacPolicyTrial({...opts,phaseHook:state=>{
+  if(state==='AFTER_APPLY')fs.writeFileSync(unrelated,'UNTRUSTED_PAYLOAD',{mode:0o600});
+ }});
+ assert.equal(r.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(fs.readFileSync(unrelated,'utf8'),'UNTRUSTED_PAYLOAD');
+ assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
+ assert.equal(fs.existsSync(path.join(tx,'manifest.json')),true);
+ const again=executeMacPolicyTrial({...opts,recoverOnly:true});
+ assert.equal(again.reason,'RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ assert.equal(fs.readFileSync(unrelated,'utf8'),'UNTRUSTED_PAYLOAD');
  assert.equal(fs.existsSync(path.join(tx,'original.bytes')),true);
 }));
