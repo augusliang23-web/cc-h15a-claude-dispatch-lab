@@ -75,3 +75,14 @@ DONE_OR_HOLD
 - Use CI/PR links as evidence; report `ZC06C_DESIGN_READY_REAL_CALL_HOLD` until evidence is satisfied.
 
 Docs: [Antigravity permissions](https://antigravity.google/docs/permissions?tab=cli), [Headless](https://antigravity.google/docs/cli/headless/), [CLI flags](https://antigravity.google/docs/cli/reference/). Project: Issue #35 / Draft PR #36.
+
+
+## Isolated filesystem rehearsal — implemented in CI only
+
+`bridge/zc06c-transaction-rehearsal.mjs` exercises the transaction state machine on **synthetic bytes in a newly created private directory under the CI runner's OS temporary directory**. It deliberately does not accept a user-supplied settings path and never reads/writes real `~/.gemini`, launches AgY, or communicates with Gemini/GitHub.
+
+It uses real fixture-only file creates, `fsync`, atomic renames, backup hashes and recovery checks. TX01–TX13 check normal restoration, **simulated** interruptions after backup/after apply/before restore, concurrent changes without overwriting, corrupted backup, malformed JSON/UTF-8 and nondefault billing configuration. Passing these tests proves only Linux CI's fixture code paths, **not** survival of a real power failure, macOS filesystem semantics, absence of an Antigravity permission bypass or restoration of the owner's actual settings.
+
+For every simulated failure/recovery result, `simulated:true`, `user_settings_modified:false`, `model_called:false`. Recovery in this fixture happens inside one test process; it does **not** constitute a tested durable cross-process crash recovery mechanism. The fixture is cleaned up at completion. A live Mac transaction implementation, independent OS-level tests and exact owner approval remain separate gates.
+
+**Gate:** offline fixture rehearsal PASS is necessary preparation, but is never sufficient to unlock any real settings write or Gemini call.
