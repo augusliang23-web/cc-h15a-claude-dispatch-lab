@@ -64,6 +64,18 @@ const newFile=(dir,name,bytes,mode=0o600,aclScan=spawnSync)=>{
    offset+=wrote;
   }
   fs.fsyncSync(fd);
+ }catch(e){
+  // This descriptor opened the file with O_EXCL. Never leave an empty/partial
+  // staging file that permanently blocks explicit recovery. Unlink ONLY if
+  // the path still refers to the exact inode owned by this descriptor.
+  try{
+   const opened=fs.fstatSync(fd);
+   const target=fs.lstatSync(dest);
+   if(target.isFile()&&!target.isSymbolicLink()&&
+      opened.ino===target.ino&&opened.dev===target.dev)
+     fs.unlinkSync(dest);
+  }catch{/* if uncertain, leave a HOLD and never delete an unknown file */}
+  throw e;
  }finally{fs.closeSync(fd);}
  syncDir(dir);
 };
