@@ -12,6 +12,14 @@ This candidate is **not** an automatic executor. It is a deterministic eligibili
 
 The module bridge/zc09-auto-continue.mjs exposes decideAutoContinue(envelope). The envelope must have exact keys mode, task, policy, evidence, history and now. All identities and paths refer to a synthetic fixture in the lab repo, with SYNTHETIC_PREAPPROVED marker (never accepted as real owner authorization).
 
+### Ordered evidence and persistent safety gate contract
+
+History now has `lastObservedAt`, `lastObservedHead`, and `terminalGate` (initially `null`, `null`, `NONE`). On a structurally valid and fresh event, the pure policy returns a **proposed** `next_history` including a monotonic event timestamp, the exact HEAD, and the newly processed string event ID. The caller would need to commit that snapshot atomically before accepting subsequent events; this offline code does not persist it, so **exactly-once processing is not yet implemented**.
+
+A distinct event at the same timestamp or older than the history watermark receives `SUPERSEDED_OR_REORDERED_EVENT`, even when it was never seen before. A mismatching historical HEAD receives `HISTORY_HEAD_MISMATCH`. P0/P1/P2, security, ambiguous external state, and blocked budget/attempt/consistency situations produce a proposed sticky `SAFETY_HOLD`. QA+CI PASS creates a proposed terminal `READY_FOR_OWNER`. **Neither terminal gate can be lifted by new evidence.** Changing the scope or starting another HEAD requires separate owner-approved reconciliation. Malformed event IDs (including JSON arrays that stringify to an existing ID) fail before deduplication.
+
+Only positive recommendation `AUTO_RETRY_ELIGIBLE_MOCK` marks the event as processed. It **does not** increment actual `attemptsUsed`, spend any money, claim a worker, or start a retry. A future authorized executor must provide independently verified post-dispatch accounting and compare-and-swap persistence. The proposed history is not a trust or authentication boundary.
+
 The output includes actual_dispatch=false, provider_calls=0, github_writes=0, mac_writes=0, merger=false, ready_to_merge=false, and owner_approval_required=true.
 
 Allowed synthetic decision gates:
