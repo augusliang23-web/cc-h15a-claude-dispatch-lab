@@ -13,7 +13,7 @@ const EXPECTED_POLICY = ['maxAttempts','attemptCostUsd','maxCostUsd','maxSeconds
 const EXPECTED_EVIDENCE = ['eventId','observedAt','ci','qa'];
 const EXPECTED_CI = ['head','status','checkedAt'];
 const EXPECTED_QA = ['head','status','checkedAt','findings'];
-const EXPECTED_HISTORY = ['attemptsUsed','costSpentUsd','elapsedSeconds','processedEventIds'];
+const EXPECTED_HISTORY = ['attemptsUsed','costSpentUsd','elapsedSeconds','processedEventIds','lastObservedAt','lastObservedHead','terminalGate'];
 const SEVERITIES = new Set(['P0','P1','P2','P3']);
 const obj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const exact = (value, keys) => obj(value) && Object.keys(value).length === keys.length &&
@@ -29,13 +29,22 @@ const RESULT = Object.freeze({
   mode:'OFFLINE_SYNTHETIC_ONLY', actual_dispatch:false, provider_calls:0,
   github_writes:0, mac_writes:0, merger:false,
 });
-function answer(gate,reason,raw=null){
+function answer(gate,reason,raw=null,{record=false,terminalGate='NONE'}={}){
   const decision = raw ? digest({
     task:raw.task.id,head:raw.task.head,event:raw.evidence.eventId,
     attempts:raw.history.attemptsUsed,gate,reason,
   }) : null;
+  // An explicit proposed transition, not durable storage or an actual dispatch.
+  // The caller must atomically persist validated history before processing more events.
+  const nextHistory = record && raw ? {
+    ...raw.history,
+    lastObservedAt:raw.evidence.observedAt,
+    lastObservedHead:raw.task.head,
+    terminalGate,
+    processedEventIds:[...raw.history.processedEventIds,raw.evidence.eventId],
+  } : null;
   return {...RESULT,gate,reason,decision_id:decision,
-    owner_approval_required:true,ready_to_merge:false};
+    next_history:nextHistory,owner_approval_required:true,ready_to_merge:false};
 }
 function valid(x) {
  if(!exact(x,EXACT_POLICY_KEYS) || x.mode!=='OFFLINE_SYNTHETIC_ONLY')return false;
@@ -51,7 +60,7 @@ function valid(x) {
     !money(p.maxCostUsd)||p.maxCostUsd<=0||p.maxCostUsd>10||
     !Number.isSafeInteger(p.maxSeconds)||p.maxSeconds<1||p.maxSeconds>3600||
     !Number.isSafeInteger(p.maxAgeSeconds)||p.maxAgeSeconds<1||p.maxAgeSeconds>300)return false;
- if(!exact(e,EXPECTED_EVIDENCE)||!EVENT.test(e.eventId)||!iso(e.observedAt)||
+ if(!exact(e,EXPECTED_EVIDENCE)||typeof e.eventId!=='string'||!EVENT.test(e.eventId)||!iso(e.observedAt)||
     !exact(e.ci,EXPECTED_CI)||!exact(e.qa,EXPECTED_QA)||
     !sha(e.ci.head)||!sha(e.qa.head)||
     !['SUCCESS','FAILURE','RUNNING','UNKNOWN'].includes(e.ci.status)||
@@ -67,6 +76,9 @@ function valid(x) {
     !Array.isArray(h.processedEventIds)||h.processedEventIds.length>50||
     new Set(h.processedEventIds).size!==h.processedEventIds.length||
     !h.processedEventIds.every(s=>typeof s==='string'&&EVENT.test(s))||
+    !['NONE','SAFETY_HOLD','READY_FOR_OWNER'].includes(h.terminalGate)||
+    !(h.lastObservedAt===null&&h.lastObservedHead===null&&h.terminalGate==='NONE' ||
+      iso(h.lastObservedAt)&&sha(h.lastObservedHead))||
     !iso(now))return false;
  return true;
 }
@@ -77,29 +89,36 @@ export function decideAutoContinue(x) {
  const xNow=Date.parse(x.now);
  if(h.processedEventIds.includes(e.eventId))return answer('HOLD','DUPLICATE_EVENT',x);
  if(e.ci.head!==t.head||e.qa.head!==t.head)return answer('HOLD','EXACT_HEAD_MISMATCH',x);
+ if(h.lastObservedHead!==null && h.lastObservedHead!==t.head)
+   return answer('HOLD','HISTORY_HEAD_MISMATCH',x);
+ if(h.lastObservedAt!==null && Date.parse(e.observedAt)<=Date.parse(h.lastObservedAt))
+   return answer('HOLD','SUPERSEDED_OR_REORDERED_EVENT',x);
+ // A preceding P0/P1/P2/security HOLD or owner-review gate cannot be overturned by newer evidence.
+ if(h.terminalGate!=='NONE')return answer('HOLD','PRIOR_TERMINAL_GATE',x);
+ if(h.processedEventIds.length>=50)return answer('HOLD','HISTORY_EVENT_LIMIT',x);
  for(const time of [e.observedAt,e.ci.checkedAt,e.qa.checkedAt]){
    const age=xNow-Date.parse(time);
    if(age < -30_000 || age>p.maxAgeSeconds*1000)
      return answer('HOLD','STALE_OR_FUTURE_EVIDENCE',x);
  }
  if(e.ci.status==='UNKNOWN'||e.qa.status==='UNKNOWN')
-   return answer('HOLD','UNVERIFIED_EXTERNAL_STATE',x);
+   return answer('HOLD','UNVERIFIED_EXTERNAL_STATE',x,{record:true,terminalGate:'SAFETY_HOLD'});
  if(e.qa.findings.some(f=>f.severity!=='P3' || f.category!=='functional'))
-   return answer('HOLD','HUMAN_REVIEW_SECURITY_OR_P2',x);
+   return answer('HOLD','HUMAN_REVIEW_SECURITY_OR_P2',x,{record:true,terminalGate:'SAFETY_HOLD'});
  if(e.ci.status==='RUNNING'||e.qa.status==='RUNNING')
-   return answer('WAITING_EVIDENCE','RUNNING_REPORTED_BY_FIXTURE_NOT_VERIFIED',x);
+   return answer('WAITING_EVIDENCE','RUNNING_REPORTED_BY_FIXTURE_NOT_VERIFIED',x,{record:true});
  if(e.ci.status==='SUCCESS' && e.qa.status==='APPROVED' && e.qa.findings.length===0)
-   return answer('READY_FOR_OWNER','CI_AND_QA_SYNTHETIC_PASS_NO_MERGE',x);
+   return answer('READY_FOR_OWNER','CI_AND_QA_SYNTHETIC_PASS_NO_MERGE',x,{record:true,terminalGate:'READY_FOR_OWNER'});
  if(e.ci.status==='SUCCESS' && e.qa.status==='APPROVED')
-   return answer('HOLD','QA_APPROVAL_WITH_FINDINGS',x);
+   return answer('HOLD','QA_APPROVAL_WITH_FINDINGS',x,{record:true,terminalGate:'SAFETY_HOLD'});
  const eligible=e.ci.status==='FAILURE'&&e.qa.status==='NOT_RUN'&&e.qa.findings.length===0 ||
      e.ci.status==='SUCCESS'&&e.qa.status==='CHANGES_REQUESTED'&&e.qa.findings.length>0;
- if(!eligible)return answer('HOLD','CONTRADICTORY_CI_QA_STATE',x);
- if(h.attemptsUsed>=p.maxAttempts)return answer('HOLD','RETRY_ATTEMPT_CAP_REACHED',x);
+ if(!eligible)return answer('HOLD','CONTRADICTORY_CI_QA_STATE',x,{record:true,terminalGate:'SAFETY_HOLD'});
+ if(h.attemptsUsed>=p.maxAttempts)return answer('HOLD','RETRY_ATTEMPT_CAP_REACHED',x,{record:true,terminalGate:'SAFETY_HOLD'});
  if(Math.round((h.costSpentUsd+p.attemptCostUsd)*100)>Math.round(p.maxCostUsd*100))
-   return answer('HOLD','COST_CAP_REACHED',x);
- if(h.elapsedSeconds>=p.maxSeconds)return answer('HOLD','TIME_CAP_REACHED',x);
- return answer('AUTO_RETRY_ELIGIBLE_MOCK','BOUNDED_OFFLINE_RETRY_RECOMMENDATION',x);
+   return answer('HOLD','COST_CAP_REACHED',x,{record:true,terminalGate:'SAFETY_HOLD'});
+ if(h.elapsedSeconds>=p.maxSeconds)return answer('HOLD','TIME_CAP_REACHED',x,{record:true,terminalGate:'SAFETY_HOLD'});
+ return answer('AUTO_RETRY_ELIGIBLE_MOCK','BOUNDED_OFFLINE_RETRY_RECOMMENDATION',x,{record:true});
 }
 
 export const FIXTURE = Object.freeze({
@@ -111,6 +130,6 @@ export const FIXTURE = Object.freeze({
  evidence:{eventId:'event-0001',observedAt:'2026-11-01T02:00:00Z',
    ci:{head:'0123456789abcdef0123456789abcdef01234567',status:'FAILURE',checkedAt:'2026-11-01T02:00:00Z'},
    qa:{head:'0123456789abcdef0123456789abcdef01234567',status:'NOT_RUN',checkedAt:'2026-11-01T02:00:00Z',findings:[]}},
- history:{attemptsUsed:0,costSpentUsd:0,elapsedSeconds:10,processedEventIds:[]},
+ history:{attemptsUsed:0,costSpentUsd:0,elapsedSeconds:10,processedEventIds:[],lastObservedAt:null,lastObservedHead:null,terminalGate:'NONE'},
  now:'2026-11-01T02:00:15Z',
 });
