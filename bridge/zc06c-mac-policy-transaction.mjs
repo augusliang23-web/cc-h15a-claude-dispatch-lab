@@ -37,6 +37,7 @@ const newFile=(dir,name,bytes,mode=0o600)=>{
  const fd=fs.openSync(dest,fs.constants.O_WRONLY|fs.constants.O_CREAT|
    fs.constants.O_EXCL|(fs.constants.O_NOFOLLOW||0),mode);
  try{
+  fs.fchmodSync(fd,mode);
   let offset=0;
   while(offset<bytes.length){
    const wrote=fs.writeSync(fd,bytes,offset,bytes.length-offset,offset);
@@ -63,7 +64,8 @@ const ensureDirs=(home,uid)=>{
   current=path.join(current,part);
   const st=fs.lstatSync(current);
   if(st.isSymbolicLink()||!st.isDirectory()||
-    (st.uid!==0&&st.uid!==uid)||(st.mode&0o022)!==0)
+    (st.uid!==0&&st.uid!==uid)||
+    ((st.mode&0o022)!==0&&!(st.uid===0&&(st.mode&0o1000)!==0)))
     throw Error('HOME_UNTRUSTED_ANCESTOR');
  }
  const settingsRoot=path.join(home,'.gemini','antigravity-cli');
@@ -147,7 +149,7 @@ const restore=(dir,uid)=>{
 };
 export function executeMacPolicyTrial({
  home=os.homedir(),platform=process.platform,uid=process.getuid?.(),
- ps=spawnSync,recoverOnly=false,
+ ps=spawnSync,recoverOnly=false,phaseHook=()=>{},
 }={}){
  if(platform!=='darwin'||!Number.isInteger(uid)||uid===0)
   return hold('MAC_NONROOT_ONLY');
@@ -165,6 +167,8 @@ export function executeMacPolicyTrial({
   if(!processQuiescent({ps}))
    return hold('ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
   const baseline=assertSettings(dir,uid);
+  // Never propagate an existing overly exposed config to staging/backups.
+  if((baseline.mode&0o077)!==0)return hold('SETTINGS_NOT_OWNER_PRIVATE');
   const plan=planRestrictedPolicy(baseline.bytes);
   if(plan.gate!=='ZC06C_OFFLINE_POLICY_PLAN_ONLY')
    return hold('UNSAFE_EXISTING_POLICY');
@@ -177,14 +181,16 @@ export function executeMacPolicyTrial({
    originalHash:plan.original_sha256,restrictedHash:plan.temporary_sha256,
    mode:baseline.mode,
   }));
+  phaseHook('AFTER_DURABLE_BACKUP',{dir});
   if(!processQuiescent({ps}))return hold('PROCESS_STARTED_BEFORE_APPLY');
   const current=assertSettings(dir,uid);
   if(current.ino!==baseline.ino||current.mode!==baseline.mode||
     sha(current.bytes)!==plan.original_sha256)
    return hold('SETTINGS_CHANGED_BEFORE_APPLY');
   // This script intentionally does not invoke model, tools, API, or CLI.
-  atomicReplace(dir,APPLIED,SETTINGS,plan.temporaryBytes,baseline.mode);
+  atomicReplace(dir,APPLIED,SETTINGS,plan.temporaryBytes,0o600);
   settingsReplaced=true;
+  phaseHook('AFTER_APPLY',{dir});
   if(sha(assertSettings(dir,uid).bytes)!==plan.temporary_sha256)
    return hold('RESTRICTED_POLICY_VERIFICATION_FAILED');
   return restore(dir,uid);
