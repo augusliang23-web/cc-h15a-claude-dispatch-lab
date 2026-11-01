@@ -92,5 +92,7 @@ test('CP08 symlinked marker invalidates synthetic recovery',()=>fixture(root=>{
  const result=child('recover',root);
  assert.equal(result.status,4);
  assert.equal(JSON.parse(result.stdout).reason,'RECOVERY_UNCERTAIN');
- // Deliberate cleanup of synthetic test fixture only.
+ // Repair only the synthetic fixture marker so its strict dispose guard can run.
+ fs.unlinkSync(root+'/synthetic.fixture');
+ fs.renameSync(root+'/original.marker',root+'/synthetic.fixture');
 }));
