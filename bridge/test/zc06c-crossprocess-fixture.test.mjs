@@ -95,7 +95,7 @@ test('CP08 symlinked marker invalidates synthetic recovery',()=>{
   fs.symlinkSync(root+'/original.marker',root+'/synthetic.fixture');
   const result=child('recover',root);
   assert.equal(result.status,4);
-  assert.equal(JSON.parse(result.stdout).reason,'RECOVERY_UNCERTAIN');
+  assert.equal(JSON.parse(result.stdout).reason,'UNTRUSTED_FIXTURE_ROOT');
   // The test owns this freshly minted temp dir; cleanup must not loosen
   // the production-style fixture trust check merely to handle a bad marker.
  }finally{fs.rmSync(root,{recursive:true,force:true});}
