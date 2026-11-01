@@ -105,3 +105,131 @@ test('AC18 invalid shape never leaks input into output',()=>{
  safe(r);assert.equal(r.gate,'HOLD');
  assert.equal(JSON.stringify(r).includes('PRIVATE_PROMPT_SENTINEL'),false);
 });
+
+test('AC19 non-string event ID must fail closed even when coerced text matches processed ID',()=>{
+ const r=trial(x=>{
+   x.history.processedEventIds=['event-0001'];
+   x.evidence.eventId=['event-0001'];
+ });
+ safe(r);assert.equal(r.gate,'HOLD');
+ assert.equal(r.reason,'INVALID_OFFLINE_ENVELOPE');
+ assert.equal(r.next_history,null);
+});
+
+test('AC20 newer P1 HOLD cannot be overturned by reordered older CI failure',()=>{
+ const newer=trial(x=>{
+   x.evidence.eventId='event-0002';
+   x.evidence.observedAt='2026-11-01T02:01:00Z';
+   x.evidence.ci.checkedAt='2026-11-01T02:01:00Z';
+   x.evidence.qa.checkedAt='2026-11-01T02:01:00Z';
+   x.evidence.ci.status='SUCCESS';
+   x.evidence.qa.status='CHANGES_REQUESTED';
+   x.evidence.qa.findings=[{severity:'P1',category:'security'}];
+   x.now='2026-11-01T02:01:05Z';
+ });
+ safe(newer);
+ assert.equal(newer.gate,'HOLD');
+ assert.equal(newer.next_history.terminalGate,'SAFETY_HOLD');
+ assert.equal(newer.next_history.lastObservedAt,'2026-11-01T02:01:00Z');
+ const older=trial(x=>{
+   x.history=structuredClone(newer.next_history);
+   x.now='2026-11-01T02:01:15Z';
+ });
+ safe(older);
+ assert.equal(older.gate,'HOLD');
+ assert.equal(older.reason,'SUPERSEDED_OR_REORDERED_EVENT');
+ assert.equal(older.next_history,null);
+});
+
+test('AC21 even newer event cannot lift prior security stop without owner gate',()=>{
+ const r=trial(x=>{
+   x.history.lastObservedAt='2026-11-01T02:01:00Z';
+   x.history.lastObservedHead=x.task.head;
+   x.history.terminalGate='SAFETY_HOLD';
+   x.history.processedEventIds=['event-0002'];
+   x.evidence.eventId='event-0003';
+   x.evidence.observedAt='2026-11-01T02:02:00Z';
+   x.evidence.ci.checkedAt='2026-11-01T02:02:00Z';
+   x.evidence.qa.checkedAt='2026-11-01T02:02:00Z';
+   x.now='2026-11-01T02:02:05Z';
+ });
+ safe(r);
+ assert.equal(r.reason,'PRIOR_TERMINAL_GATE');
+ assert.equal(r.next_history,null);
+});
+
+test('AC22 owner-review PASS is terminal, cannot turn into automatic retry',()=>{
+ const finished=trial(x=>{
+   x.evidence.ci.status='SUCCESS';
+   x.evidence.qa.status='APPROVED';
+ });
+ safe(finished);assert.equal(finished.gate,'READY_FOR_OWNER');
+ assert.equal(finished.next_history.terminalGate,'READY_FOR_OWNER');
+ const after=trial(x=>{
+   x.history=structuredClone(finished.next_history);
+   x.evidence.eventId='event-0004';
+   x.evidence.observedAt='2026-11-01T02:01:00Z';
+   x.evidence.ci.checkedAt='2026-11-01T02:01:00Z';
+   x.evidence.qa.checkedAt='2026-11-01T02:01:00Z';
+   x.now='2026-11-01T02:01:10Z';
+ });
+ safe(after);assert.equal(after.reason,'PRIOR_TERMINAL_GATE');
+});
+
+test('AC23 proposed history marks event as processed, no double retry recommendation',()=>{
+ const first=trial();safe(first);
+ assert.equal(first.gate,'AUTO_RETRY_ELIGIBLE_MOCK');
+ assert.deepEqual(first.next_history.processedEventIds,['event-0001']);
+ const replay=trial(x=>{x.history=structuredClone(first.next_history);});
+ safe(replay);assert.equal(replay.reason,'DUPLICATE_EVENT');
+ assert.equal(replay.next_history,null);
+});
+
+test('AC24 mismatch between pinned head and historical watermark must HOLD',()=>{
+ const r=trial(x=>{
+   x.history.lastObservedAt='2026-11-01T01:59:00Z';
+   x.history.lastObservedHead='f'.repeat(40);
+   x.history.terminalGate='NONE';
+ });
+ safe(r);assert.equal(r.reason,'HISTORY_HEAD_MISMATCH');
+});
+
+test('AC25 equal-timestamp unseen event is not fresh evidence',()=>{
+ const r=trial(x=>{
+   x.history.lastObservedAt='2026-11-01T02:00:00Z';
+   x.history.lastObservedHead=x.task.head;
+   x.history.terminalGate='NONE';
+   x.evidence.eventId='event-0008';
+ });
+ safe(r);assert.equal(r.reason,'SUPERSEDED_OR_REORDERED_EVENT');
+});
+
+test('AC26 malformed watermark, missing terminal gate, and inconsistent history fail closed',()=>{
+ const cases=[
+  x=>{x.history.lastObservedAt='2026-11-01T01:59:00Z';},
+  x=>{x.history.lastObservedHead=x.task.head;},
+  x=>{x.history.terminalGate='SAFETY_HOLD';},
+  x=>{delete x.history.terminalGate;},
+  x=>{x.history.lastObservedAt=['2026-11-01T01:59:00Z'];},
+  x=>{x.history.terminalGate='RUNNING';},
+ ];
+ for(const mutate of cases){
+   const r=trial(mutate);safe(r);
+   assert.equal(r.reason,'INVALID_OFFLINE_ENVELOPE');
+   assert.equal(r.next_history,null);
+ }
+});
+
+test('AC27 stale evidence does not advance monotonic history',()=>{
+ const r=trial(x=>{x.evidence.observedAt='2026-11-01T01:50:00Z';});
+ safe(r);assert.equal(r.reason,'STALE_OR_FUTURE_EVIDENCE');
+ assert.equal(r.next_history,null);
+});
+
+test('AC28 processed-ID capacity exhausted stops without recording new event',()=>{
+ const r=trial(x=>{
+   x.history.processedEventIds=Array.from({length:50},(_,i)=>'prior-'+String(i).padStart(4,'0'));
+ });
+ safe(r);assert.equal(r.reason,'HISTORY_EVENT_LIMIT');
+ assert.equal(r.next_history,null);
+});
