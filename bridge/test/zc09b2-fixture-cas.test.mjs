@@ -265,3 +265,15 @@ test('FS31 two independent Node processes cannot commit the same revision twice'
  assert.equal(outcomes.filter(x=>x.gate==='HOLD').length,1);
  assert.deepEqual(recorded(root),claim());
 }));
+
+test('FS32 reordered fields of the same validated lease do not invalidate a CAS',()=>withFixture(root=>{
+ init(root);assert.equal(commit(root).gate,'FIXTURE_CAS_COMMITTED');
+ const next=copy(claim());
+ next.revision=2;next.seenEvents.push('event-0002');
+ next.lastObservedAt='2026-11-01T01:02:00Z';
+ const l=next.activeLease;
+ next.activeLease={sha:l.sha,expiresAt:l.expiresAt,claimEventId:l.claimEventId,leaseId:l.leaseId};
+ const r=commit(root,next,{expectedRevision:1,now:'2026-11-01T01:02:05Z'});
+ assert.equal(r.gate,'FIXTURE_CAS_COMMITTED');
+ assert.deepEqual(recorded(root),next);
+}));
