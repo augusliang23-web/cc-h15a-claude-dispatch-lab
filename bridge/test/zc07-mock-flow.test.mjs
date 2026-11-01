@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {mkdtempSync,rmSync,symlinkSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {simulateZeroCopy,verifyTrace,DEMO_TASK} from '../zc07-mock-flow.mjs';
 
 const gate='ZC07_MOCK_FLOW_PASS_NOT_LIVE_AUTHORIZED';
@@ -101,4 +106,87 @@ test('Z710 direct CLI --demo reports mock only; --once and unknown args fail clo
       assert.equal(output.reason,'ONLY_OFFLINE_DEMO_ALLOWED');
     }
   }
+});
+
+const rechain = r => {
+  let previous='GENESIS';
+  for(const e of r.trace) {
+    e.previous=previous;
+    const {digest,...unsigned}=e;
+    e.digest=createHash('sha256').update(JSON.stringify(unsigned)).digest('hex');
+    previous=e.digest;
+  }
+  r.trace_digest=previous;
+  return r;
+};
+
+test('Z711 rehashed inconsistent CI and QA evidence cannot pass synthetic owner gate',()=>{
+  const variations=[
+    r=>{r.trace[3].detail.commit='SIMULATED-WRONG';},
+    r=>{r.trace[3].detail.fail=1;},
+    r=>{r.trace[3].detail.pass=0;},
+    r=>{r.trace[3].detail.tests=0;},
+    r=>{r.trace[4].detail.reviewed='SIMULATED-WRONG';},
+    r=>{r.trace[4].detail.findings=99;},
+    r=>{r.trace[5].detail.candidate='SIMULATED-WRONG';},
+    r=>{r.trace[2].detail.commit='SIMULATED-WRONG';},
+    r=>{r.trace[1].detail.tools_allowed=1;},
+    r=>{r.trace[2].detail.patch_applied=true;},
+    r=>{r.trace[5].detail.production_ready=true;},
+  ];
+  for(const change of variations) {
+    const r=structuredClone(simulateZeroCopy());
+    change(r);
+    rechain(r);
+    assert.equal(verifyTrace(r),false,'must reject digest-consistent forged passing evidence');
+  }
+});
+
+test('Z712 rehashed actor spoof, extra keys and unsafe synthetic target are rejected',()=>{
+  const variations=[
+    r=>{r.trace[4].actor='mock-gemini';},
+    r=>{r.trace[3].detail.unverified='pass';},
+    r=>{r.trace[2].detail.target_path='../../.ssh/id_rsa';},
+    r=>{r.trace[0].detail.task_id='!';},
+    r=>{r.trace[1].detail.task_digest='f'.repeat(64);},
+    r=>{r.requires_owner_approval=false;},
+  ];
+  for(const change of variations) {
+    const r=structuredClone(simulateZeroCopy());
+    change(r);
+    rechain(r);
+    assert.equal(verifyTrace(r),false);
+  }
+});
+
+test('Z713 direct CLI via symlink alias enforces --demo and fail-closed --once',()=>{
+  const dir=mkdtempSync(path.join(tmpdir(),'zc07-direct-alias-'));
+  try {
+    const alias=path.join(dir,'mock-entry.mjs');
+    symlinkSync(fileURLToPath(new URL('../zc07-mock-flow.mjs',import.meta.url)),alias);
+    for(const flag of ['--demo','--once']) {
+      const r=spawnSync(process.execPath,[alias,flag],{encoding:'utf8',timeout:4000});
+      assert.equal(r.error,undefined);
+      assert.ok(r.stdout.trim(),'alias must run and report; no silent exit');
+      const report=JSON.parse(r.stdout);
+      noSideEffects(report);
+      if(flag==='--demo') {
+        assert.equal(r.status,0);
+        assert.equal(report.gate,gate);
+        assert.equal(verifyTrace(report),true);
+      } else {
+        assert.equal(r.status,2);
+        assert.equal(report.reason,'ONLY_OFFLINE_DEMO_ALLOWED');
+      }
+    }
+  } finally {
+    rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+test('Z714 rehashed HOLD trace must preserve its own reason',()=>{
+  const r=structuredClone(simulateZeroCopy({fault:'ci-fail'}));
+  r.trace.at(-1).detail.reason='SYNTHETIC_QA_REJECTED';
+  rechain(r);
+  assert.equal(verifyTrace(r),false);
 });
