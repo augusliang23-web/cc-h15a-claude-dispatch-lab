@@ -1,0 +1,118 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {executeMacPolicyTrial} from '../zc06c-mac-policy-transaction.mjs';
+
+const original=Buffer.from('{\n  "toolPermission":"request-review",\n  "theme":"fixture"\n}\n');
+function fixture(fn){
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'zc06c-mactx-test-'));
+ fs.chmodSync(home,0o700);
+ const dir=path.join(home,'.gemini','antigravity-cli');
+ fs.mkdirSync(dir,{recursive:true,mode:0o700});
+ fs.chmodSync(path.join(home,'.gemini'),0o700);
+ fs.chmodSync(dir,0o700);
+ const file=path.join(dir,'settings.json');
+ fs.writeFileSync(file,original,{mode:0o600});
+ const opts={home,platform:'darwin',uid:process.getuid?.()??1000,
+   ps:()=>({status:0,stdout:'/sbin/launchd\n',stderr:''})};
+ try{return fn({opts,home,file,dir});}
+ finally{fs.rmSync(home,{recursive:true,force:true});}
+}
+const recovered=r=>assert.equal(r.gate,'ZC06C_MAC_EXACT_RESTORE_CONFIRMED');
+test('MT01 temporary real fixture config is byte-identically restored',()=>fixture(({opts,file,dir})=>{
+ const before=fs.readFileSync(file);
+ const r=executeMacPolicyTrial(opts);
+ recovered(r);
+ assert.equal(r.model_invoked,false);
+ assert.equal(r.credentials_emitted,false);
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(fs.statSync(file).mode&0o777,0o600);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT02 existing Antigravity desktop process blocks any writes',()=>fixture(({opts,file,dir})=>{
+ const before=fs.readFileSync(file);
+ const r=executeMacPolicyTrial({...opts,
+  ps:()=>({status:0,stdout:'/Applications/Antigravity.app/Contents/MacOS/Antigravity\n'})});
+ assert.equal(r.reason,'ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT03 an active agy CLI session blocks modification',()=>fixture(({opts})=>{
+ const r=executeMacPolicyTrial({...opts,
+  ps:()=>({status:0,stdout:'/Users/fixture/.local/bin/agy\n'})});
+ assert.equal(r.reason,'ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
+}));
+test('MT04 failed process inventory cannot claim safe quiescence',()=>fixture(({opts})=>{
+ const r=executeMacPolicyTrial({...opts,
+  ps:()=>({status:1,stderr:'SYNTHETIC_SECRET'})});
+ assert.equal(r.reason,'ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
+ assert.equal(JSON.stringify(r).includes('SYNTHETIC_SECRET'),false);
+}));
+test('MT05 interruption after durable backup recovers without applying',()=>fixture(({opts,dir,file})=>{
+ const before=fs.readFileSync(file);
+ const r=executeMacPolicyTrial({...opts,
+  phaseHook:state=>{if(state==='AFTER_DURABLE_BACKUP')throw Error('simulated abort');}});
+ assert.equal(r.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ recovered(executeMacPolicyTrial({...opts,recoverOnly:true}));
+ assert.equal(fs.readFileSync(file).equals(before),true);
+}));
+test('MT06 exception after applying restriction restores original',()=>fixture(({opts,file,dir})=>{
+ const originalBytes=fs.readFileSync(file);
+ const r=executeMacPolicyTrial({...opts,phaseHook:state=>{
+  if(state==='AFTER_APPLY')throw Error('simulated after apply abort');
+ }});
+ recovered(r);
+ assert.equal(fs.readFileSync(file).equals(originalBytes),true);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT07 concurrent unknown edit after restriction is never overwritten',()=>fixture(({opts,file,dir})=>{
+ const unknown=Buffer.from('{"interleaving":"other actor"}\n');
+ const r=executeMacPolicyTrial({...opts,phaseHook:state=>{
+  if(state==='AFTER_APPLY')fs.writeFileSync(file,unknown);
+ }});
+ assert.equal(r.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ assert.equal(r.reason,'UNKNOWN_OR_CONCURRENT_SETTINGS_CHANGE');
+ assert.equal(fs.readFileSync(file).equals(unknown),true);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ const recover=executeMacPolicyTrial({...opts,recoverOnly:true});
+ assert.equal(recover.reason,'UNKNOWN_OR_CONCURRENT_SETTINGS_CHANGE');
+ assert.equal(fs.readFileSync(file).equals(unknown),true);
+}));
+test('MT08 nonowner-private config is blocked before backup',()=>fixture(({opts,file,dir})=>{
+ fs.chmodSync(file,0o644);
+ const r=executeMacPolicyTrial(opts);
+ assert.equal(r.reason,'SETTINGS_NOT_OWNER_PRIVATE');
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT09 symlinked settings are not trusted',()=>fixture(({opts,file,dir})=>{
+ const real=path.join(dir,'actual.json');
+ fs.renameSync(file,real);
+ fs.symlinkSync(real,file);
+ const r=executeMacPolicyTrial(opts);
+ assert.equal(r.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT10 Linux real CLI execution is hard-blocked',()=>{
+ const r=executeMacPolicyTrial({platform:'linux'});
+ assert.equal(r.reason,'MAC_NONROOT_ONLY');
+});
+test('MT11 missing private restore record will not manufacture backup',()=>fixture(({opts})=>{
+ assert.equal(executeMacPolicyTrial({...opts,recoverOnly:true}).reason,'NO_RECOVERY_RECORD');
+}));
+test('MT12 invalid settings billing provider is blocked',()=>fixture(({opts,file,dir})=>{
+ fs.writeFileSync(file,'{"modelProvider":"gemini"}\n');
+ const r=executeMacPolicyTrial(opts);
+ assert.equal(r.reason,'UNSAFE_EXISTING_POLICY');
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),false);
+}));
+test('MT13 direct CLI cannot run model or settings changes with --once',()=>{
+ const script=new URL('../zc06c-mac-policy-transaction.mjs',import.meta.url);
+ const child=spawnSync(process.execPath,[script.pathname,'--once'],{
+  encoding:'utf8',timeout:5000});
+ assert.equal(child.status,2);
+ assert.equal(JSON.parse(child.stdout).reason,'NO_PROVIDER_TRANSACTION_FLAG_REQUIRED');
+});
