@@ -129,7 +129,7 @@ export function verifyTrace(envelope) {
       dispatch.detail.task_digest===proof && dispatch.detail.tools_allowed===0 &&
       proposal.detail.commit===commit && proposal.detail.patch_applied===false &&
       typeof proposal.detail.target_path==='string' &&
-      new RegExp('^docs/fixture-[a-z0-9-]{1,40}[.]md
+      new RegExp('^docs/fixture-[a-z0-9-]{1,40}[.]md$').test(proposal.detail.target_path) &&
       proposal.detail.pr==='SIMULATED_ONLY' &&
       ci.detail.commit===commit && ci.detail.tests===1 &&
       ci.detail.pass===1 && ci.detail.fail===0 &&
