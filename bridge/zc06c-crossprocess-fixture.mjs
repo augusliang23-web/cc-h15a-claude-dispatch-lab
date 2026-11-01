@@ -86,7 +86,7 @@ export function createSyntheticFixture({
   return fail('FIXTURE_CREATION_FAILED');
  }
 }
-export function simulateSyntheticApply(root){
+export function simulateSyntheticApply(root,{beforeFinalCheck}={}){
  try{
   if(!trustedRoot(root))return fail('UNTRUSTED_FIXTURE_ROOT');
   const j=readJournal(root);
@@ -96,6 +96,7 @@ export function simulateSyntheticApply(root){
      sha(secureRead(root,'restricted.synthetic'))!==j.restricted)
     return fail('SOURCE_CHANGED');
   journalWrite(root,{...j,state:'APPLYING'});
+  if(typeof beforeFinalCheck==='function')beforeFinalCheck(root);
   if(sha(secureRead(root,'settings.synthetic.json'))!==j.original)
     return fail('SOURCE_CHANGED_DURING_PREPARATION');
   replace(root,'settings.synthetic.json',secureRead(root,'restricted.synthetic'),'apply.next');
