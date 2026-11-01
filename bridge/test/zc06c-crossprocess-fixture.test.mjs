@@ -100,3 +100,24 @@ test('CP08 symlinked marker invalidates synthetic recovery',()=>{
   // the production-style fixture trust check merely to handle a bad marker.
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+
+test('CP09 interleaving after journal write aborts synthetic restore',()=>fixture(root=>{
+ assert.equal(child('apply',root).status,77);
+ const competing=Buffer.from('{"interleaving":"synthetic"}\n');
+ const result=recoverSyntheticFixture(root,{beforeFinalCheck:dir=>{
+  fs.writeFileSync(dir+'/settings.synthetic.json',competing);
+ }});
+ assert.equal(result.gate,'ZC06C_CROSSPROC_HOLD');
+ assert.equal(result.reason,'CONCURRENT_OR_UNKNOWN_SETTINGS_CHANGE');
+ assert.equal(fs.readFileSync(root+'/settings.synthetic.json').equals(competing),true);
+}));
+test('CP10 interleaving after journal write aborts synthetic apply',()=>fixture(root=>{
+ const competing=Buffer.from('{"interleaving":"synthetic apply"}\n');
+ const result=simulateSyntheticApply(root,{beforeFinalCheck:dir=>{
+  fs.writeFileSync(dir+'/settings.synthetic.json',competing);
+ }});
+ assert.equal(result.gate,'ZC06C_CROSSPROC_HOLD');
+ assert.equal(result.reason,'SOURCE_CHANGED_DURING_PREPARATION');
+ assert.equal(fs.readFileSync(root+'/settings.synthetic.json').equals(competing),true);
+}));
