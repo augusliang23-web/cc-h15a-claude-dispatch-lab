@@ -104,3 +104,29 @@ Codex identified a P2: a second process can write settings between the hash insp
 However this does **not** provide atomic compare-and-swap. An uncooperative writer can still mutate the file after the last check. Portable Node filesystem API has no atomic check-current-hash-and-replace primitive. A production Mac transaction must use an exclusive cooperating lock and confirm no other AgY settings users; external noncooperating writes remain a residual risk. The actual user settings must never be changed under the current design-only authorization.
 
 **Guarantee language:** We detect changes present at inspection and specific test interleavings; we do **not** guarantee preserving concurrent writes at every timing or true power-loss-safe restoration. If a conflicting active process cannot be excluded, STOP rather than attempt the global transaction. Neither CI nor synthetic tests prove the owner Mac is free of concurrent writers.
+
+
+## Owner-authorized real Mac configuration-only trial (no provider)
+
+On 2026-11-01, the owner authorized a **temporary, locally applied global Antigravity CLI settings policy change and exact restore** while no Antigravity tasks are running. They **did not authorize Gemini/AgY model invocation, billing changes, PR merge/deploy, a second macOS user or a background daemon**.
+
+A new experimental command has been implemented in \`bridge/zc06c-mac-policy-transaction.mjs\`. Its only direct CLI flags are \`--apply-and-restore\` and \`--recover-only\`; it cannot call an AI model. No user-supplied path is accepted by its CLI. Until a pinned HEAD passes independent Codex review and an owner-side macOS run succeeds, it remains a **candidate**, not a proven restore facility.
+
+### Preflight / execution boundary
+
+1. Save all Antigravity work. Fully quit the Antigravity desktop application and any \`agy\` CLI sessions. The transaction preflight rejects any process whose process name indicates Antigravity or \`agy\`. It does not attempt to kill processes, but a process-name scan cannot prove absolute quiescence against invisible/unrecognized processes.
+2. Use a clean exact-SHA checkout of the reviewed branch. Never run a floating-branch script or a command pasted from an unverified source.
+3. The script requires \`darwin\`, non-root, trusted HOME ancestors and settings parents, a regular owned non-symlink \`settings.json\`, owner-private permissions \`0600\`, and a valid JSON baseline accepted by the pure policy planner. Any unexpected state stops without attempting a provider call.
+4. It requires an absent previous recovery directory and absent staging files. Creates a private durable backup and manifest under \`.gemini/antigravity-cli/.zc06c-restore-once\` before temporary config replacement; verifies original inode/mode/hash immediately before application.
+5. Temporarily inserts strict \`toolPermission\`, explicit tool Deny rules, no nonworkspace access and no extra AI credits. It checks the applied settings bytes and immediately restores the original backup with matching raw bytes and original mode. It removes its recovery directory only after verifying the restoration.
+6. Any exception or unknown file change results in a HOLD. If the private recovery folder remains, the owner should **not manually delete it or launch AgY**. Review the sanitized result and invoke the *same exact SHA* \`--recover-only\` on the Mac, only after understanding why the preceding run held; unresolved or competing writes require manual reconciliation, not forced overwrite.
+7. The script uses Node synchronous filesystem operations, fsync and same-directory rename. **SIGKILL, OS crash and noncooperating writers can still interrupt restoration or race its final check**. A durable private backup makes explicit recovery possible but does not guarantee automatic recovery after sudden process termination. The script is not a kernel-enforced sandbox.
+
+### Forbidden outcome claims
+
+- Do NOT infer from configuration apply/restore that the installed AgY CLI obeys Deny at runtime; the tool is never launched by this trial.
+- Do NOT infer Google AI Pro account mapping, zero provider cost guarantees for future model use, or freedom from other applications reading the global settings.
+- Do NOT claim this can run while Antigravity Desktop is still open; the candidate intentionally fails closed when it detects the app.
+- Only \`ZC06C_MAC_EXACT_RESTORE_CONFIRMED\` plus a separate owner-run trace and independent security review establish that one trial restored its observed settings bytes. They do **not** establish unrestricted production readiness.
+
+**Incremental AI usage for this config-only run is zero** by design (no provider action), though GitHub Actions CI may consume included runner minutes. Full development "Zero Copy" dispatch remains a later separate milestone.
