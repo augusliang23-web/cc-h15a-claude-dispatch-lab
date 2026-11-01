@@ -71,7 +71,12 @@ const writeExclusive=(file,bytes)=>{
   fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
  try{
   fs.fchmodSync(fd,0o600);
-  fs.writeSync(fd,bytes);
+  let offset=0;
+  while(offset<bytes.length){
+   const written=fs.writeSync(fd,bytes,offset,bytes.length-offset,offset);
+   if(written<=0)throw Error('SHORT_WRITE');
+   offset+=written;
+  }
   fs.fsyncSync(fd);
  }finally{fs.closeSync(fd);}
 };
@@ -163,8 +168,14 @@ export function compareAndSwapFixture({root,expectedRevision,proposedLedger,now,
   finally{fs.closeSync(fd);}
   dirSync(dir);
   const current=rawRead(dir,true);
-  if(current.revision!==expectedRevision)throw Error('REVISION_CONFLICT');
-  if(!validAdvance(current,proposedLedger,time(now)))throw Error('INVALID_TRANSITION');
+  if(current.revision!==expectedRevision||!validAdvance(current,proposedLedger,time(now))){
+   // Known rejection before staging can safely release our own fixture lock.
+   // No ledger bytes have changed; a separate caller can retry from readback.
+   fs.unlinkSync(lock);
+   dirSync(dir);
+   locked=false;
+   return hold(current.revision!==expectedRevision?'REVISION_CONFLICT':'INVALID_TRANSITION');
+  }
   const fresh=pack(proposedLedger);
   stage=path.join(dir,'stage-'+randomBytes(12).toString('hex')+'.tmp');
   writeExclusive(stage,fresh);
