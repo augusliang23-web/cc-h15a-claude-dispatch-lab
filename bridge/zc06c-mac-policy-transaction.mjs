@@ -132,30 +132,17 @@ const readManifest=(root,uid)=>{
    throw Error('MANIFEST_INVALID');
  return val;
 };
-// Never recursively remove a transaction directory: failed random stages,
-// unexpected same-UID entries, or symlink substitutions must be preserved.
-// A clean, exact two-file record may be removed only by explicit names; an
-// unexpected entry means restored settings are not sufficient to close the gate.
-const cleanRecovery=(dir,root,uid)=>{
+// Node pathname checks do NOT prevent a same-UID process from swapping
+// manifest.json or original.bytes between check and unlink. Without verified
+// OS exclusion, retain ALL recovery evidence after settings are restored.
+// This controlled candidate now intentionally returns HOLD, never success.
+const cleanRecovery=(dir,root,uid,phaseHook)=>{
+ phaseHook('BEFORE_RECOVERY_READONLY_INSPECTION',{dir});
  safeStat(root,uid,'dir');
- const expected=new Set([MANIFEST,BACKUP]);
- const entries=fs.readdirSync(root);
- if(entries.length!==expected.size||
-    entries.some(name=>!expected.has(name)))return false;
- for(const name of [MANIFEST,BACKUP]){
-  const st=safeStat(path.join(root,name),uid);
-  if((st.mode&0o077)!==0)return false;
- }
- // Explicit unlink of *known* records, never rm -r: new unfamiliar files
- // introduced during cleanup cannot be recursively deleted. A same-UID writer
- // can still race known pathnames; this is NOT an OS isolation guarantee.
- fs.unlinkSync(path.join(root,MANIFEST));
- fs.unlinkSync(path.join(root,BACKUP));
- fs.rmdirSync(root);
- syncDir(dir);
- return true;
+ phaseHook('AFTER_RECOVERY_READONLY_INSPECTION',{dir});
+ return false; // Absolutely no unlink, rmdir or recursive deletion.
 };
-const restore=(dir,uid,ps,aclScan)=>{
+const restore=(dir,uid,ps,aclScan,phaseHook=()=>{})=>{
  if(!processQuiescent({ps}))return hold('ANTIGRAVITY_SESSION_OR_PROCESS_UNKNOWN');
  const root=path.join(dir,TX);
  for(const file of [root,path.join(root,BACKUP),path.join(root,MANIFEST),
@@ -173,8 +160,8 @@ const restore=(dir,uid,ps,aclScan)=>{
   // Source already exact. Only cleanup after exact restore verified.
   if(!verifyRestore(saved,current).restored_exactly)
     return hold('ORIGINAL_BYTES_MISMATCH');
-  if(!cleanRecovery(dir,root,uid))
-   return hold('RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+  if(!cleanRecovery(dir,root,uid,phaseHook))
+   return hold('RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
   return result('ZC06C_MAC_EXACT_RESTORE_CONFIRMED',
     {restore:'ORIGINAL_ALREADY_PRESENT'});
  }
@@ -192,8 +179,8 @@ const restore=(dir,uid,ps,aclScan)=>{
  const observed=assertSettings(dir,uid);
  if(!verifyRestore(saved,observed.bytes).restored_exactly||
     observed.mode!==m.mode)return hold('RESTORE_VERIFICATION_FAILED');
- if(!cleanRecovery(dir,root,uid))
-  return hold('RECOVERY_UNEXPECTED_ENTRIES_RETAINED');
+ if(!cleanRecovery(dir,root,uid,phaseHook))
+  return hold('RECOVERY_EVIDENCE_RETAINED_OWNER_ACTION_REQUIRED');
  return result('ZC06C_MAC_EXACT_RESTORE_CONFIRMED',
   {restore:'FROM_PRIVATE_BACKUP'});
 };
@@ -218,7 +205,7 @@ export function executeMacPolicyTrial({
   root=path.join(dir,TX);
   if(recoverOnly){
    if(!fs.existsSync(root))return hold('NO_RECOVERY_RECORD');
-   return restore(dir,uid,ps,aclScan);
+   return restore(dir,uid,ps,aclScan,phaseHook);
   }
   if(fs.existsSync(root)||fs.existsSync(path.join(dir,APPLIED))||
      fs.existsSync(path.join(dir,RESTORING)))
@@ -260,12 +247,12 @@ export function executeMacPolicyTrial({
   phaseHook('AFTER_APPLY',{dir});
   if(sha(assertSettings(dir,uid).bytes)!==plan.temporary_sha256)
    return hold('RESTRICTED_POLICY_VERIFICATION_FAILED');
-  return restore(dir,uid,ps,aclScan);
+  return restore(dir,uid,ps,aclScan,phaseHook);
  }catch{
   // When possible, restore now; if uncertain, leave the durable private
   // backup/manifest for explicit --recover-only. Never overwrite unknown edits.
   if(settingsReplaced&&dir&&root){
-   try{return restore(dir,uid,ps,aclScan);}
+   try{return restore(dir,uid,ps,aclScan,phaseHook);}
    catch{return hold('RECOVERY_NEEDED_AFTER_FAILURE');}
   }
   return hold('PREFLIGHT_OR_TRANSACTION_FAILURE');
