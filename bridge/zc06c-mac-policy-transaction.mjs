@@ -64,25 +64,18 @@ const newFile=(dir,name,bytes,mode=0o600,aclScan=spawnSync)=>{
    offset+=wrote;
   }
   fs.fsyncSync(fd);
- }catch(e){
-  // This descriptor opened the file with O_EXCL. Never leave an empty/partial
-  // staging file that permanently blocks explicit recovery. Unlink ONLY if
-  // the path still refers to the exact inode owned by this descriptor.
-  try{
-   const opened=fs.fstatSync(fd);
-   const target=fs.lstatSync(dest);
-   if(target.isFile()&&!target.isSymbolicLink()&&
-      opened.ino===target.ino&&opened.dev===target.dev)
-     fs.unlinkSync(dest);
-  }catch{/* if uncertain, leave a HOLD and never delete an unknown file */}
-  throw e;
  }finally{fs.closeSync(fd);}
  syncDir(dir);
 };
-const atomicReplace=(dir,tempName,finalName,bytes,mode,aclScan)=>{
- newFile(dir,tempName,bytes,mode,aclScan);
- fs.renameSync(path.join(dir,tempName),path.join(dir,finalName));
- syncDir(dir);
+// Never unlink a failed staging pathname. Keep it inside the private
+// transaction directory, where a future recovery can use a NEW random name.
+// Only after original settings are fully restored do we remove this directory.
+const atomicReplace=(txRoot,destDir,stagePrefix,finalName,bytes,mode,aclScan)=>{
+ const stage=stagePrefix+'.'+crypto.randomBytes(12).toString('hex')+'.tmp';
+ newFile(txRoot,stage,bytes,mode,aclScan);
+ fs.renameSync(path.join(txRoot,stage),path.join(destDir,finalName));
+ syncDir(txRoot);
+ syncDir(destDir);
 };
 const ensureDirs=(home,uid)=>{
  // This live test supports a regular user home; it deliberately refuses
@@ -178,7 +171,7 @@ const restore=(dir,uid,ps,aclScan)=>{
  // writer CAN still change the target before rename; there is no atomic CAS.
  if(sha(assertSettings(dir,uid).bytes)!==m.restrictedHash)
   return hold('SETTINGS_CHANGED_BEFORE_RESTORE');
- atomicReplace(dir,RESTORING,SETTINGS,saved,m.mode,aclScan);
+ atomicReplace(root,dir,'restore',SETTINGS,saved,m.mode,aclScan);
  if(!noMacAcl(path.join(dir,SETTINGS),aclScan))return hold('RESTORED_ACL_UNVERIFIED');
  const observed=assertSettings(dir,uid);
  if(!verifyRestore(saved,observed.bytes).restored_exactly||
@@ -244,7 +237,7 @@ export function executeMacPolicyTrial({
     sha(current.bytes)!==plan.original_sha256)
    return hold('SETTINGS_CHANGED_BEFORE_APPLY');
   // This script intentionally does not invoke model, tools, API, or CLI.
-  atomicReplace(dir,APPLIED,SETTINGS,plan.temporaryBytes,0o600,aclScan);
+  atomicReplace(root,dir,'apply',SETTINGS,plan.temporaryBytes,0o600,aclScan);
   if(!noMacAcl(path.join(dir,SETTINGS),aclScan))return hold('APPLIED_ACL_UNVERIFIED');
   settingsReplaced=true;
   phaseHook('AFTER_APPLY',{dir});
