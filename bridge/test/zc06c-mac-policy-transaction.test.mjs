@@ -228,3 +228,35 @@ test('MT23 inherited ACL on new private backup fails before writing source bytes
  assert.equal(fs.existsSync(backup),true);
  assert.equal(fs.statSync(backup).size,0);
 }));
+
+
+test('MT24 one transient ACL error on restore stage does not strand recovery',()=>fixture(({opts,file,dir})=>{
+ let failed=false;
+ const before=fs.readFileSync(file);
+ const aclScan=(_binary,args)=>{
+  const name=path.basename(args[1]);
+  if(name==='settings.zc06c.restore.tmp'&&!failed){
+   failed=true;return {status:1,stdout:'',stderr:'SYNTHETIC_ACL_TIMEOUT'};
+  }
+  return {status:0,stdout:'-rw------- 1 owner staff 10 Nov 1 00:00 fixture\n'};
+ };
+ const r=executeMacPolicyTrial({...opts,aclScan});
+ assert.equal(failed,true);
+ recovered(r);
+ assert.equal(fs.existsSync(path.join(dir,'settings.zc06c.restore.tmp')),false);
+ assert.equal(fs.readFileSync(file).equals(before),true);
+ assert.equal(JSON.stringify(r).includes('SYNTHETIC_ACL_TIMEOUT'),false);
+}));
+test('MT25 persistent ACL refusal leaves recoverable backup without bad staging',()=>fixture(({opts,file,dir})=>{
+ const before=fs.readFileSync(file);
+ const denyRestore=(_binary,args)=>({
+  status:path.basename(args[1])==='settings.zc06c.restore.tmp'?1:0,
+  stdout:'-rw------- 1 owner staff 10 Nov 1 00:00 fixture\n'
+ });
+ const first=executeMacPolicyTrial({...opts,aclScan:denyRestore});
+ assert.equal(first.gate,'ZC06C_MAC_TRANSACTION_HOLD');
+ assert.equal(fs.existsSync(path.join(dir,'settings.zc06c.restore.tmp')),false);
+ assert.equal(fs.existsSync(path.join(dir,'.zc06c-restore-once')),true);
+ recovered(executeMacPolicyTrial({...opts,recoverOnly:true}));
+ assert.equal(fs.readFileSync(file).equals(before),true);
+}));
