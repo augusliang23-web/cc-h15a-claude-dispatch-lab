@@ -1,0 +1,58 @@
+name: ZC-MVP-A Mac Local Bridge Mock E2E
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'bridge/zc-mock-bridge.mjs'
+      - 'bridge/zc-bridge-auth.mjs'
+      - 'bridge/zc-bridge-claim.mjs'
+      - 'bridge/zc-mock-worker.mjs'
+      - 'bridge/test/zc-mock-bridge.test.mjs'
+      - 'docs/zc-mvp-a-mac-local-bridge.md'
+      - '.github/workflows/zc-mvp-a-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-mock-e2e:
+    if: >-
+      github.repository == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/cc-h15a-claude-dispatch-lab' &&
+      github.head_ref == 'zc/zc-mvp-a-mac-local-bridge' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read-only checkout of exact proposed HEAD
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js (no package install)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Check syntax and exact source SHA
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check bridge/zc-bridge-auth.mjs
+          node --check bridge/zc-bridge-claim.mjs
+          node --check bridge/zc-mock-worker.mjs
+          node --check bridge/zc-mock-bridge.mjs
+          node --check bridge/test/zc-mock-bridge.test.mjs
+
+      - name: Run offline mock security test suite
+        run: node --test --test-reporter=spec bridge/test/zc-mock-bridge.test.mjs
+
+      - name: Execute synthetic E2E dry-run demonstration
+        run: node bridge/zc-mock-bridge.mjs
