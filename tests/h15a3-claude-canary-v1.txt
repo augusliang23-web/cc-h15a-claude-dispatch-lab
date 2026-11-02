@@ -1,0 +1,7 @@
+H1.5A-3 Claude Routines integration canary
+
+This text is a non-executable synthetic fixture.
+Expected PR description payload: blue lantern
+Expected Claude PR comment result: BLUE LANTERN
+
+No source code, credentials, installation, release, or deployment.
